@@ -60,38 +60,58 @@ class EvolutionClient:
         """Busca o QR Code de uma instância já existente"""
         return await self._get("/instance/connect/{instance}")
 
+    async def delete_instance(self) -> Dict[str, Any]:
+        """Deleta a instância atual para permitir recriação com novo QR"""
+        url = f"{self.base_url}/instance/delete/{self.instance_name}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.delete(url, headers=self.headers)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erro ao deletar instância: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Erro ao deletar instância: {str(e)}")
+            raise
+
     async def connection_state(self) -> Dict[str, Any]:
         """Retorna o estado de conexão atual da instância"""
         return await self._get("/instance/connectionState/{instance}")
 
     async def create_instance(self) -> Dict[str, Any]:
-        """Cria a instância se não existir, senão busca o QR Code da existente.
+        """Cria a instância se não existir, senão reconecta ou recria para gerar QR.
         
         Fluxo:
-        1. Tenta criar → retorna QR Code (instância nova)
+        1. Tenta criar → retorna JSON com qrcode.base64 (instância nova)
         2. Se 403 (já existe) → verifica estado:
-           - Se já conectado (open) → retorna estado atual
-           - Se desconectado   → busca novo QR Code via /instance/connect
+           - "open"       → já conectado, retorna estado
+           - qualquer outro → deleta e recria para gerar QR fresco
         """
+        payload = {
+            "instanceName": self.instance_name,
+            "qrcode": True,
+            "integration": "WHATSAPP-BAILEYS"
+        }
         try:
-            payload = {
-                "instanceName": self.instance_name,
-                "qrcode": True,
-                "integration": "WHATSAPP-BAILEYS"
-            }
             return await self._post("/instance/create", payload)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
-                # Instância já existe — verifica se está conectada
-                logger.info("Instância já existe, verificando estado de conexão...")
-                state = await self.connection_state()
-                status = state.get("instance", {}).get("state", "")
+                logger.info("Instância já existe, verificando estado...")
+                try:
+                    state = await self.connection_state()
+                    status = state.get("instance", {}).get("state", "")
+                except Exception:
+                    status = ""
+
                 if status == "open":
-                    # Já conectado, não precisa de QR
+                    logger.info("Instância já conectada.")
                     return {"status": "already_connected", "instance": state}
-                # Desconectada — pede novo QR
-                logger.info("Instância desconectada, solicitando novo QR Code...")
-                return await self.connect_instance()
+
+                # Desconectada/connecting — deleta e recria para QR fresco
+                logger.info(f"Instância no estado '{status}', deletando para recriar QR...")
+                await self.delete_instance()
+                return await self._post("/instance/create", payload)
             raise
 
     async def send_text_message(self, number: str, text: str) -> Dict[str, Any]:
