@@ -22,12 +22,22 @@ async def receive_evolution_webhook(
     Endpoint de escuta para o WhatsApp.
     Tudo que acontece na sessão (mensagens, leitura, etc) baterá aqui.
     """
-    payload = await request.json()
+    try:
+        body_bytes = await request.body()
+        if not body_bytes:
+            return {"status": "ignored"}
+        payload = await request.json()
+    except Exception as e:
+        logger.warning(f"Webhook com body inválido: {e}")
+        return {"status": "ignored"}
     
     # Validação segura (ignora eventos estranhos da api antes de serializar)
     if "event" not in payload:
+        logger.debug(f"Webhook sem campo 'event' ignorado. Keys: {list(payload.keys())}")
         return {"status": "ignored"}
-        
+
+    logger.info(f"Webhook recebido: event={payload.get('event')} instance={payload.get('instance')}")
+
     try:
         # Tenta popular o schema
         body = WebhookBody(**payload)
