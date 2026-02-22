@@ -1,5 +1,11 @@
+import logging
 from fastapi import FastAPI
 from app.infrastructure.config.settings import settings
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s: %(name)s - %(message)s"
+)
 
 def create_app() -> FastAPI:
     app = FastAPI(
