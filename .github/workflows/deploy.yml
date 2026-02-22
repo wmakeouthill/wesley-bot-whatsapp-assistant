@@ -1,0 +1,44 @@
+name: Deploy Oracle VPS
+on:
+    push:
+        branches:
+            - main
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+
+            - name: Executando Deploy Automático via SSH
+              uses: appleboy/ssh-action@master
+              with:
+                  host: ${{ secrets.ORACLE_HOST }}
+                  username: ${{ secrets.ORACLE_USER }}
+                  key: ${{ secrets.ORACLE_SSH_KEY }}
+                  script: |
+                      echo "Iniciando Pipeline de Deploy..."
+
+                      # Se a pasta não existir no servidor, ele faz o clone
+                      if [ ! -d "/home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant" ]; then
+                        git clone https://github.com/${{ github.repository }}.git /home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant
+                      fi
+
+                      # Entra na pasta do repo
+                      cd /home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant
+
+                      # Força o pull das atualizações mais recentes e descarta mudanças locais conflitantes
+                      git fetch --all
+                      git reset --hard origin/main
+                      git pull origin main
+
+                      # Recria o arquivo .env seguro injetando os Segredos Livres do Github Secrets
+                      echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
+                      echo "EVOLUTION_API_KEY=${{ secrets.EVOLUTION_API_KEY }}" >> .env
+
+                      # Reconstrói e reinicia a arquitetura inteira em background (Isso já ativa o SQLite, RAG e Evolution via compose)
+                      docker compose down
+                      docker compose up -d --build
+
+                      echo "Pipeline Concluído com Sucesso! 🚀"
