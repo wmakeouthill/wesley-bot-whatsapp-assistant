@@ -12,6 +12,9 @@ services:
     env_file:
       - .env
     environment:
+      # Credenciais secretas puxadas de variáveis de ambiente reais da Oracle
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-B7F499252EE14C8AAA0BA53ED71C0F73}
       - EVOLUTION_API_URL=http://bot_evolution_api:8080
     networks:
       - bot_network
@@ -28,14 +31,16 @@ services:
       - DOCKER_ENV=true
       - LOG_LEVEL=ERROR,WARN
 
-      # Utilizando Armazenamento Local Bruto (em Disco) ao invés de DB para poupar RAM
-      - DATABASE_ENABLED=false
+      # Banco de dados
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=sqlite
+      - DATABASE_CONNECTION_URI=sqlite:///bot/evolution_db/evolution.db
 
       # Redis Desativado
       - CACHE_REDIS_ENABLED=false
 
       # Segurança da API
-      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-B7F499252EE14C8AAA0BA53ED71C0F73}
+      - AUTHENTICATION_API_KEY=B7F499252EE14C8AAA0BA53ED71C0F73
       - AUTHENTICATION_EXPOSE_IN_ENV=true
 
       # Configurações do WhatsApp
