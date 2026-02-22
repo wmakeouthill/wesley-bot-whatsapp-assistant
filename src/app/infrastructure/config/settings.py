@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     
     # Evolution API Settings
     evolution_api_url: str = "http://bot_evolution_api:8080" # URL interna no docker
-    evolution_api_key: str = "B7F499252EE14C8AAA0BA53ED71C0F73"
+    evolution_api_key: str = ""
     evolution_instance_name: str = "wesley_bot_session"
     
     # Gemini AI Settings
