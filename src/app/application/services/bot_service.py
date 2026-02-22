@@ -41,11 +41,8 @@ class AtendimentoService:
             logger.info(f"Mensagem de grupo ignorada: {remote_jid}")
             return
         elif '@lid' in remote_jid:
-            from app.infrastructure.db.lid_resolver import resolver_lid
-            telefone = await resolver_lid(remote_jid, body.instance)
-            if not telefone:
-                logger.warning(f"LID sem número real mapeado ainda: {remote_jid} — aguardando próxima mensagem")
-                return
+            # Evolution API v2.3.7+ resolve @lid internamente no envio — passa o JID completo
+            telefone = remote_jid
         else:
             # @s.whatsapp.net: extrair só o número
             telefone = remote_jid.split('@')[0]

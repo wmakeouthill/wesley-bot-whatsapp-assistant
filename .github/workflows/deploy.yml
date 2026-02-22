@@ -157,6 +157,8 @@ jobs:
 
             # Recarrega Máquinas
             sudo docker compose down || docker compose down
+            # Força pull da imagem evoapicloud (v2.3.7+) antes de subir
+            sudo docker compose pull evolution-api || docker compose pull evolution-api || true
             sudo docker compose up -d --build || docker compose up -d --build
 
             # Garante que WARP e redsocks estao rodando apos o deploy
