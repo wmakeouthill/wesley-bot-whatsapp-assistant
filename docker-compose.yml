@@ -9,10 +9,9 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+    env_file:
+      - .env
     environment:
-      # Credenciais secretas puxadas de variáveis de ambiente reais da Oracle
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-B7F499252EE14C8AAA0BA53ED71C0F73}
       - EVOLUTION_API_URL=http://bot_evolution_api:8080
     networks:
       - bot_network
@@ -37,7 +36,7 @@ services:
       - CACHE_REDIS_ENABLED=false
 
       # Segurança da API
-      - AUTHENTICATION_API_KEY=B7F499252EE14C8AAA0BA53ED71C0F73
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-B7F499252EE14C8AAA0BA53ED71C0F73}
       - AUTHENTICATION_EXPOSE_IN_ENV=true
 
       # Configurações do WhatsApp

@@ -10,13 +10,18 @@ git clone <url-do-seu-repo-no-github>
 cd wesley-bot-whatsapp-assistant
 ```
 
-## 2. Inserindo as Senhas (Obrigatório)
+## 2. Inserindo as Senhas (Segurança)
 
-No terminal da Oracle, antes de subir tudo, você precisa exportar as duas chaves que farão a mágica. O Docker vai ler essas duas variáveis secretas:
+Em vez de jogar as chaves diretamente no terminal como variáveis flutuantes, a forma mais segura na Oracle é criar o arquivo `.env`. Este arquivo já foi devidamente ignorado e não subiu para o git (como checamos anteriormente).
+
+Você pode criar esse arquivo diretamente pelo terminal da Oracle usando o comando `echo` passando as suas chaves reais:
 
 ```bash
-export GEMINI_API_KEY="SUA_CHAVE_DO_GOOGLE_AI_STUDIO"
+echo "GEMINI_API_KEY=sua_chave_real_do_google_ai_aqui
+EVOLUTION_API_KEY=crie_uma_senha_forte_aqui_para_blindar_sua_evolution" > .env
 ```
+
+O arquivo ` .env` será criado instantaneamente com os dados dentro. O Docker injetará essas credenciais de forma segura dentro dos contêineres no momento da execução!
 
 ## 3. Rodando NATIVAMENTE pelo Docker
 

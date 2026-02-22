@@ -63,3 +63,36 @@ class EvolutionClient:
             }
         }
         return await self._post(url, payload)
+
+    async def send_base64_audio(self, number: str, base64_audio: str) -> Dict[str, Any]:
+        """Envia um áudio gravado como PTT (Voice Message)"""
+        url = "/message/sendWhatsAppAudio/{instance}"
+        payload = {
+            "number": number,
+            "options": {
+                "delay": 2000,
+                "presence": "recording",
+                "encoding": True
+            },
+            "audioMessage": {
+                "audio": base64_audio
+            }
+        }
+        return await self._post(url, payload)
+
+    async def send_base64_document(self, number: str, base64_doc: str, filename: str) -> Dict[str, Any]:
+        """Envia um documento (Excel/PDF) em Base64"""
+        url = "/message/sendMedia/{instance}"
+        payload = {
+            "number": number,
+            "options": {
+                "delay": 1500,
+                "presence": "composing"
+            },
+            "mediaMessage": {
+                "mediatype": "document",
+                "fileName": filename,
+                "media": base64_doc
+            }
+        }
+        return await self._post(url, payload)

@@ -5,6 +5,10 @@ from app.infrastructure.external.evolution_client import EvolutionClient
 from app.domain.services.rag_service import PortfolioRAG
 from google import genai
 from app.infrastructure.config.settings import settings
+import base64
+import io
+import openpyxl
+from gtts import gTTS
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +43,16 @@ class AtendimentoService:
             
         logger.info(f"[{telefone} / {nome_cliente}]: {texto_recebido}")
         
+        # EASTER EGGS - Testando planilhas e áudio dinâmicos!
+        texto_lower = texto_recebido.lower()
+        if "mandar áudio" in texto_lower or "mandar audio" in texto_lower:
+            await self._enviar_audio_teste(telefone, nome_cliente)
+            return
+            
+        if "criar planilha" in texto_lower:
+            await self._enviar_planilha_teste(telefone, nome_cliente)
+            return
+
         # 1. Puxa contexto do RAG local via similaridade (FAISS)
         contexto = self.rag.retrieve(texto_recebido, top_k=3)
         
@@ -82,3 +96,38 @@ CONTEXTO DEDUZIDO DO PORTFÓLIO:
             return msg_obj.extendedTextMessage["text"]
             
         return None
+
+    async def _enviar_audio_teste(self, telefone: str, nome: str):
+        """Usa Google TTS para gerar voz de baixa latência em RAM"""
+        mensagem = f"Claro, {nome}! Eu sou um robô que economiza sua memória e consigo te mandar um áudio da Oracle em tempo real."
+        logger.info(f"Gerando áudio TTS para {telefone}...")
+        
+        tts = gTTS(text=mensagem, lang='pt', slow=False)
+        audio_io = io.BytesIO()
+        tts.write_to_fp(audio_io)
+        audio_io.seek(0)
+        
+        base64_audio = base64.b64encode(audio_io.read()).decode('utf-8')
+        base16_header = f"data:audio/mp3;base64,{base64_audio}"
+        await self.evolution_client.send_base64_audio(telefone, base16_header)
+        
+    async def _enviar_planilha_teste(self, telefone: str, nome: str):
+        """Usa OpenPyXL para gerar uma tabela Excel limpa em RAM"""
+        logger.info(f"Gerando planilha em memória para {telefone}...")
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Relatório Oracle"
+        
+        ws.append(["Nome do Servidor", "RAM", "Uso CPU", "Status"])
+        ws.append(["Oracle A1", "1 GB (Usado)", "5%", "Online"])
+        ws.append(["Evolution API", "Dispensada", "0%", "Offline (Storage Mode)"])
+        ws.append(["Faiss RAG", "2 MB", "1%", "Leve e Rápido"])
+        
+        excel_io = io.BytesIO()
+        wb.save(excel_io)
+        excel_io.seek(0)
+        
+        base64_excel = base64.b64encode(excel_io.read()).decode('utf-8')
+        base16_header = f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64_excel}"
+        await self.evolution_client.send_base64_document(telefone, base16_header, "Resumo_Performance.xlsx")
