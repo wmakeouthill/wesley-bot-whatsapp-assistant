@@ -20,7 +20,7 @@ services:
       - bot_network
 
   evolution-api:
-    image: atendai/evolution-api:latest
+    image: atendai/evolution-api:v2.1.1
     container_name: bot_evolution_api
     restart: always
     ports:
