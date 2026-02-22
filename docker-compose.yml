@@ -16,6 +16,8 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
       - EVOLUTION_API_URL=http://bot_evolution_api:8080
+      # URL pública para o Evolution API chamar o bot (via IP do VPS)
+      - WEBHOOK_URL=http://${VPS_IP:-163.176.194.195}:8000/webhooks/evolution
     networks:
       - bot_network
 

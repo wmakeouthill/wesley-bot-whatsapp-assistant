@@ -13,6 +13,7 @@ class EvolutionClient:
         self.base_url = settings.evolution_api_url
         self.api_key = settings.evolution_api_key
         self.instance_name = settings.evolution_instance_name
+        self.webhook_url = settings.webhook_url
         
         self.headers = {
             "apikey": self.api_key,
@@ -109,7 +110,14 @@ class EvolutionClient:
         payload = {
             "instanceName": self.instance_name,
             "qrcode": True,
-            "integration": "WHATSAPP-BAILEYS"
+            "integration": "WHATSAPP-BAILEYS",
+            "webhook": {
+                "enabled": True,
+                "url": self.webhook_url,
+                "byEvents": False,
+                "base64": False,
+                "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+            }
         }
         try:
             await self._post("/instance/create", payload)
@@ -126,7 +134,8 @@ class EvolutionClient:
                 status = ""
 
             if status == "open":
-                logger.info("Instância já conectada.")
+                logger.info("Instância já conectada. Garantindo webhook configurado...")
+                await self.set_webhook()
                 return {"status": "already_connected", "instance": state}
 
             # Desconectada/connecting — deleta e aguarda limpeza de memória antes de recriar
@@ -150,6 +159,19 @@ class EvolutionClient:
                         await asyncio.sleep(2)
                         continue
                     raise
+
+    async def set_webhook(self) -> Dict[str, Any]:
+        """Configura ou atualiza o webhook da instância no Evolution API"""
+        payload = {
+            "webhook": {
+                "enabled": True,
+                "url": self.webhook_url,
+                "byEvents": False,
+                "base64": False,
+                "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+            }
+        }
+        return await self._post("/webhook/set/{instance}", payload)
 
     async def send_text_message(self, number: str, text: str) -> Dict[str, Any]:
         """Envia uma mensagem de texto simples"""
