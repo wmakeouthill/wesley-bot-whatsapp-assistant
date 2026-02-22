@@ -23,7 +23,7 @@ class PortfolioRAG:
         
         # O novo Google GenAI SDK
         self.client = genai.Client(api_key=settings.gemini_api_key)
-        self.embedding_model = "text-embedding-004"
+        self.embedding_model = "gemini-embedding-001"
         
         self.index = None
         self.chunks_metadata = []
