@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Poetry e Ambientes Virtuais
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Chaves e Segredos
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Bancos de Dados SQLite Lokais
+*.db
+*.sqlite3
+bot_data.db
+
+# RAG & Embeddings
+*.faiss
+vector_store.faiss
+vector_metadata.pkl
+
+# Volumes do Docker
+evolution_db/
+evolution_instances/
+evolution_store/
+
+# IDE e Sistemas
+.idea/
+.vscode/
+.DS_Store
+*.swp

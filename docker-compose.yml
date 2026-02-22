@@ -1,0 +1,61 @@
+version: "3.8"
+
+services:
+  api:
+    build: .
+    container_name: bot_api
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      # Credenciais secretas puxadas de variáveis de ambiente reais da Oracle
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-B7F499252EE14C8AAA0BA53ED71C0F73}
+      - EVOLUTION_API_URL=http://bot_evolution_api:8080
+    networks:
+      - bot_network
+
+  evolution-api:
+    image: atendai/evolution-api:latest
+    container_name: bot_evolution_api
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      # Configurações do servidor
+      - SERVER_URL=http://localhost:8080
+      - DOCKER_ENV=true
+      - LOG_LEVEL=ERROR,WARN
+
+      # Utilizando Armazenamento Local Bruto (em Disco) ao invés de DB para poupar RAM
+      - DATABASE_ENABLED=false
+      - DATABASE_PROVIDER=postgresql
+
+      # Redis Desativado
+      - CACHE_REDIS_ENABLED=false
+
+      # Segurança da API
+      - AUTHENTICATION_API_KEY=B7F499252EE14C8AAA0BA53ED71C0F73
+      - AUTHENTICATION_EXPOSE_IN_ENV=true
+
+      # Configurações do WhatsApp
+      - WA_SESSION_ID=wesley_bot_session
+      - DEL_INSTANCE=false
+      - ALWAYS_ONLINE=true
+    volumes:
+      - evolution_db:/bot/evolution_db
+      - evolution_instances:/evolution/instances
+      - evolution_store:/evolution/store
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge
+
+volumes:
+  evolution_db:
+  evolution_instances:
+  evolution_store:
