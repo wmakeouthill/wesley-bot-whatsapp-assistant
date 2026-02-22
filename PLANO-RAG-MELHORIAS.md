@@ -24,21 +24,23 @@ Mapeamento completo das técnicas existentes lá → implementação equivalente
 - ✅ Chunking simples por palavras (1000 words, 100 overlap)
 - ✅ Indexação recursiva `**/*.md`
 - ✅ Auto-rebuild por mtime
-- ❌ `top_k` fixo em 3 — sem considerar intenção da pergunta
-- ❌ Sem threshold de distância — retorna qualquer chunk mesmo irrelevante
-- ❌ Sem fallback garantido — se query é vaga, não garante curriculo/stacks
-- ❌ Sem source metadata por chunk — não sabe de qual arquivo veio
-- ❌ Sem detecção de projeto por nome — não carrega markdown completo on-demand
-- ❌ Sem tags semânticas por arquivo
+- ✅ `retrieve_smart()` com top_k dinâmico por intenção da pergunta
+- ✅ Threshold `MAX_L2_DISTANCE = 1.2` — chunks irrelevantes descartados
+- ✅ Fallback garantido — `CURRICULO.md` + `STACKS.md` injetados quando RAG retorna vazio
+- ✅ Source metadata por chunk — `source`, `is_project`, `is_fallback`
+- ✅ `ProjectDetector` — detecta projeto na query e carrega markdown completo on-demand
+- ⬜ Tags semânticas por arquivo (YAML frontmatter) — futuro
 
 ### `AtendimentoService` (`bot_service.py`)
 
 - ✅ Detecção de formato: áudio / planilha / texto
 - ✅ RAG → Gemini → gTTS (agêntico)
 - ✅ RAG → Gemini → openpyxl Excel (agêntico)
-- ❌ `top_k` fixo em 3 — não varia por tipo de pergunta
-- ❌ Sem injeção de projeto on-demand no contexto
-- ❌ Sem fallback de contexto quando RAG retorna pouco
+- ✅ `retrieve_smart()` — top_k varia por tipo de pergunta
+- ✅ Injeção de projeto on-demand antes de qualquer chamada Gemini
+- ✅ Fallback de contexto com log identificando quando ativado
+- ✅ Detecção robusta: `"áudio"/"voz"` obrigatórios para áudio; `"tabela"` só dispara com verbo de ação
+- ✅ Isolamento do tópico real — ruído de formato removido da query antes do RAG
 
 ---
 
@@ -46,7 +48,7 @@ Mapeamento completo das técnicas existentes lá → implementação equivalente
 
 ### Fase 1 — `rag_service.py`: Source metadata + Threshold + Fallback + Top-k dinâmico
 
-#### 1.1 — Source-aware chunking `[ ]`
+#### 1.1 — Source-aware chunking `[x]`
 
 Guardar no metadata de cada chunk: `source_file`, `is_project`, `is_fallback`.
 
@@ -63,7 +65,7 @@ Guardar no metadata de cada chunk: `source_file`, `is_project`, `is_fallback`.
   }
   ```
 
-#### 1.2 — Score threshold em L2 `[ ]`
+#### 1.2 — Score threshold em L2 `[x]`
 
 FAISS retorna distância L2. Distâncias altas = irrelevante.
 
@@ -72,7 +74,7 @@ FAISS retorna distância L2. Distâncias altas = irrelevante.
   - Resultados com `distance > MAX_L2_DISTANCE` são descartados
   - Se 0 resultados sobrar → fallback automático
 
-#### 1.3 — Fallback garantido (curriculo + stacks) `[ ]`
+#### 1.3 — Fallback garantido (curriculo + stacks) `[x]`
 
 Quando `retrieve()` não acha nada relevante (todos acima do threshold):
 
@@ -80,7 +82,7 @@ Quando `retrieve()` não acha nada relevante (todos acima do threshold):
 - Python: arquivos `CURRICULO.md` e `STACKS.md` guardados como texto bruto no init,
   retornados como contexto base quando score baixo
 
-#### 1.4 — Top-k dinâmico por intenção `[ ]`
+#### 1.4 — Top-k dinâmico por intenção `[x]`
 
 Detectar intenção da query e ajustar `top_k`:
 
@@ -97,7 +99,7 @@ def _calcular_top_k(query: str) -> int:
     return 3  # default
 ```
 
-#### 1.5 — On-demand project loading `[ ]`
+#### 1.5 — On-demand project loading `[x]`
 
 Detectar nome de projeto na query → carregar o markdown completo do arquivo (bypassa FAISS).
 
@@ -105,34 +107,66 @@ Detectar nome de projeto na query → carregar o markdown completo do arquivo (b
 - Python:
   - `ProjectDetector`: lê nomes dos arquivos em `projects/` → gera keywords automáticas
   - Ex: `lol-matchmaking-fazenda.md` → keywords `["lol", "matchmaking", "fazenda", "lol matchmaking fazenda"]`
-  - Fuzzy match (fuzz Levenshtein ou simples `in`) contra query
   - Se detectado: lê o arquivo `.md` completo e concatena no contexto
+
+#### 1.6 — Fuzzy matching no `ProjectDetector` `[x]`
+
+Permite detectar projetos mesmo com erros de digitação.
+
+- Java: `ContextSearchService.temSimilaridade()` + `calcularLevenshtein()` com distância ≤ 2
+- Python: `difflib.SequenceMatcher` (stdlib, zero dependências)
+  - `ratio >= 0.82` ≈ até 2 erros por palavra
+  - Só aplica em keywords com 4+ chars (evita falsos positivos)
+  - Fluxo: substring exato primeiro; se não achar, tenta fuzzy
+  - Log registra se o match foi `exato` ou `fuzzy`
 
 ---
 
 ### Fase 2 — `bot_service.py`: Usar os novos recursos
 
-#### 2.1 — Substituir `retrieve(q, top_k=3)` por `retrieve_smart(q)` `[ ]`
+#### 2.1 — Substituir `retrieve(q, top_k=3)` por `retrieve_smart(q)` `[x]`
 
 Chama `_calcular_top_k` internamente, retorna contexto otimizado.
 
-#### 2.2 — Injetar projeto on-demand no contexto `[ ]`
+#### 2.2 — Injetar projeto on-demand no contexto `[x]`
 
 Antes da chamada Gemini:
 
 ```python
-projeto_md = self.rag.load_project_if_mentioned(texto)
+projeto_md = self.rag.load_project_if_mentioned(topico_query)
 if projeto_md:
-    contexto = projeto_md + "\n---\n" + contexto
+    contexto = projeto_md + "\n---\n" + contexto_rag
 ```
 
-#### 2.3 — Fallback de contexto visível no log `[ ]`
+#### 2.3 — Fallback de contexto visível no log `[x]`
 
 Logar quando o fallback garantido for ativado para facilitar debug.
 
+#### 2.4 — Detecção agêntica robusta de formato `[x]`
+
+**Problema corrigido:** `"fala"`, `"fale"`, `"falar"` eram sinais de áudio — falso positivo em frases normais como `"Me fala sobre o Wesley"`.
+
+**Regras implementadas:**
+
+- Áudio: exige `"áudio" | "audio" | "voz" | "voice"` — palavras inequívocas
+- Planilha: exige `"planilha" | "excel" | "spreadsheet" | "xlsx"` OU `"tabela"` + verbo de ação
+- `"tabela"` sozinha não dispara (ex: `"como funciona a tabela de rotas?"` → texto normal)
+
+#### 2.5 — Isolamento do tópico real antes do RAG `[x]`
+
+Query enviada ao FAISS é limpa de ruído de formato antes dos embeddings:
+
+```python
+# "Me envia em áudio o último emprego do Wesley"
+# → topico_query = "último emprego do Wesley"  (sem "áudio", "envia", "me envia")
+```
+
+Remove: palavras de formato (`áudio`, `planilha`, `excel`...), verbos de ação (`manda`, `envia`, `gera`...), partículas (`por favor`, `pfv`).
+Log mostra o tópico extraído para debug.
+
 ---
 
-### Fase 3 — Token Budget (médio prazo) `[ ]`
+### Fase 3 — Token Budget (médio prazo) `[ ]` ⬜ futuro
 
 Implementar `TokenBudgetService` equivalente:
 
@@ -151,9 +185,12 @@ Implementar `TokenBudgetService` equivalente:
 | 1.3 Fallback garantido | ✅ concluído | `rag_service.py` → `_load_fallback_context()` — CURRICULO.md + STACKS.md injetados quando RAG retorna vazio |
 | 1.4 Top-k dinâmico | ✅ concluído | `rag_service.py` → `_calcular_top_k()` + `retrieve_smart()` — projetos=10, trabalho=6, stack=5, default=3 |
 | 1.5 On-demand project loading | ✅ concluído | `rag_service.py` → `ProjectDetector` — keywords automáticas do nome do arquivo, detect() retorna md completo |
-| 2.1 retrieve_smart no bot_service | ✅ concluído | `bot_service.py` → `self.rag.retrieve_smart(texto)` em todos os pontos |
-| 2.2 Projeto on-demand no contexto | ✅ concluído | `bot_service.py` → `projeto_md = self.rag.load_project_if_mentioned(texto)` antes de qualquer resposta |
+| 1.6 Fuzzy matching no ProjectDetector | ✅ concluído | `rag_service.py` → `_fuzzy_match()` com `SequenceMatcher` (stdlib) — ratio ≥ 0.82, fallback após substring exato |
+| 2.1 retrieve_smart no bot_service | ✅ concluído | `bot_service.py` → `self.rag.retrieve_smart(topico_query)` em todos os pontos |
+| 2.2 Projeto on-demand no contexto | ✅ concluído | `bot_service.py` → `projeto_md = self.rag.load_project_if_mentioned(topico_query)` antes de qualquer resposta |
 | 2.3 Log de fallback | ✅ concluído | `rag_service.py` → `logger.info("RAG: nenhum chunk relevante...")` |
+| 2.4 Detecção agêntica robusta | ✅ concluído | `bot_service.py` → `_FORMATO_AUDIO/PLANILHA` obrigatórios, `"tabela"` só com verbo de ação, falsos positivos eliminados |
+| 2.5 Isolamento do tópico antes do RAG | ✅ concluído | `bot_service.py` → `topico_query` limpo de ruído de formato antes dos embeddings |
 | 3.1 Token budget | ⬜ futuro | — |
 
 ---
@@ -170,8 +207,13 @@ Para cada arquivo, gera keywords:
 - Sem separadores: `lolmatchmakingfazenda`
 - Partes individuais: `lol`, `matchmaking`, `fazenda`
 
-Detecção é por **substring na query** (simples, sem fuzzy — suficiente para o caso de uso).
-Se detectado, retorna o conteúdo completo do `.md`, que é **injetado antes do contexto FAISS** no prompt.
+Detecção em duas camadas:
+
+1. **Substring exato** — `kw in query_lower`
+2. **Fuzzy** — `SequenceMatcher(kw, word).ratio() >= 0.82` para cada palavra da query (só keywords com 4+ chars)
+
+Log registra `exato` ou `fuzzy` para facilitar debug.
+Se detectado, retorna o conteúdo completo do `.md`, **injetado antes do contexto FAISS** no prompt.
 
 ### Fallback garantido
 

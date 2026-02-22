@@ -4,6 +4,7 @@ import faiss
 import pickle
 import logging
 import numpy as np
+from difflib import SequenceMatcher
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 from google import genai
@@ -72,24 +73,52 @@ class ProjectDetector:
                 kws.append(parte)
         return kws
 
+    def _fuzzy_match(self, kw: str, query_words: List[str]) -> bool:
+        """
+        Levenshtein aproximado via SequenceMatcher (stdlib, zero dependências).
+        Portado de ContextSearchService.temSimilaridade() + calcularLevenshtein() (Java).
+        Ratio >= 0.82 equivale a ~2 erros em palavra de 11 chars.
+        Só aplica em keywords com 4+ chars para evitar falsos positivos.
+        """
+        if len(kw) < 4:
+            return False
+        for word in query_words:
+            if len(word) < 3:
+                continue
+            ratio = SequenceMatcher(None, kw, word).ratio()
+            if ratio >= 0.82:
+                return True
+        return False
+
     def detect(self, query: str) -> Optional[str]:
         """
         Retorna o conteúdo do markdown do projeto mencionado na query, ou None.
-        Usa matching exato e parcial (substring) sobre as keywords geradas.
+        1º tenta substring exato; se não achar, tenta fuzzy (SequenceMatcher).
         """
         if not self._loaded:
             self.load()
         query_lower = query.lower()
+        query_words = query_lower.split()
         for nome, info in self._cache.items():
+            matched = False
+            match_type = ""
             for kw in info["keywords"]:
                 if kw in query_lower:
-                    try:
-                        content = info["path"].read_text(encoding="utf-8")
-                        logger.info(f"ProjectDetector: projeto '{nome}' detectado na query → injetando markdown")
-                        return f"--- Projeto: {nome} ---\n{content}"
-                    except Exception as e:
-                        logger.error(f"ProjectDetector: erro lendo {info['path']}: {e}")
-                        return None
+                    matched = True
+                    match_type = "exato"
+                    break
+                if self._fuzzy_match(kw, query_words):
+                    matched = True
+                    match_type = "fuzzy"
+                    break
+            if matched:
+                try:
+                    content = info["path"].read_text(encoding="utf-8")
+                    logger.info(f"ProjectDetector: projeto '{nome}' detectado ({match_type}) → injetando markdown")
+                    return f"--- Projeto: {nome} ---\n{content}"
+                except Exception as e:
+                    logger.error(f"ProjectDetector: erro lendo {info['path']}: {e}")
+                    return None
         return None
 
 

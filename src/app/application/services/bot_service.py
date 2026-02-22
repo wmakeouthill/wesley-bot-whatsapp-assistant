@@ -57,19 +57,46 @@ class AtendimentoService:
         
         texto_lower = texto_recebido.lower()
 
-        # Detecta o FORMATO de resposta pedido pelo usuário
-        _quer_audio = any(k in texto_lower for k in (
-            "audio", "áudio", "voz", "voice", "fale", "falar", "fala", "diga", "dizer"
-        ))
-        _quer_planilha = any(k in texto_lower for k in (
-            "planilha", "excel", "spreadsheet", "tabela"
-        ))
+        # ---------------------------------------------------------------
+        # Detecção de FORMATO agêntico
+        # Regras: palavra de formato OBRIGATÓRIA para evitar falsos positivos.
+        # "fala", "fale", "falar" são verbos comuns em PT — NÃO são sinal de áudio
+        # sozinhos. Requer "áudio", "audio", "voz" ou "voice" explícito.
+        # "tabela" sozinha pode ser parte de pergunta normal; exige verbo de ação.
+        # ---------------------------------------------------------------
+        _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
+        _FORMATO_PLANILHA = {"planilha", "excel", "spreadsheet", "xlsx", "xls"}
+        _VERBOS_ACAO = {"manda", "mandar", "envia", "enviar", "me manda", "me envia",
+                        "gera", "gerar", "cria", "criar", "faz", "fazer", "quero",
+                        "preciso", "pode", "consegue", "testa", "teste"}
 
-        # 1. Contexto RAG com top_k dinâmico por intenção
-        contexto_rag = self.rag.retrieve_smart(texto_recebido)
+        _quer_audio = any(k in texto_lower for k in _FORMATO_AUDIO)
+        _quer_planilha = any(k in texto_lower for k in _FORMATO_PLANILHA) or (
+            "tabela" in texto_lower and any(v in texto_lower for v in _VERBOS_ACAO)
+        )
+
+        # ---------------------------------------------------------------
+        # Extrai o tópico real removendo os indicadores de formato da query
+        # antes de ir ao RAG, evitando poluir os embeddings com "áudio", "planilha" etc.
+        # ---------------------------------------------------------------
+        _REMOVER_DA_QUERY = _FORMATO_AUDIO | _FORMATO_PLANILHA | {
+            "me envia", "me manda", "me envie", "me mande",
+            "manda", "envia", "gera", "cria", "faz",
+            "em formato de", "em formato", "como", "no formato",
+            "por favor", "pfv", "pf",
+        }
+        topico_query = texto_lower
+        for rem in _REMOVER_DA_QUERY:
+            topico_query = topico_query.replace(rem, " ")
+        topico_query = " ".join(topico_query.split()).strip() or texto_recebido
+
+        logger.info(f"RAG query topic: '{topico_query}' (audio={_quer_audio}, planilha={_quer_planilha})")
+
+        # 1. Contexto RAG com top_k dinâmico — usa o tópico sem ruído de formato
+        contexto_rag = self.rag.retrieve_smart(topico_query)
 
         # 2. Injeta markdown completo do projeto se mencionado (on-demand)
-        projeto_md = self.rag.load_project_if_mentioned(texto_recebido)
+        projeto_md = self.rag.load_project_if_mentioned(topico_query)
         if projeto_md:
             contexto = projeto_md + "\n---\n" + contexto_rag
         else:
@@ -83,7 +110,7 @@ class AtendimentoService:
             await self._responder_como_audio(telefone, nome_cliente, texto_recebido, contexto)
             return
 
-        # Resposta em texto normal
+        # Resposta em texto normal — usa texto_recebido original no Gemini (contexto completo)
         resposta_ia = await self._gerar_resposta_texto(nome_cliente, texto_recebido, contexto)
         try:
             await self.evolution_client.send_text_message(telefone, resposta_ia)

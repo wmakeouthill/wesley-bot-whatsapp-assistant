@@ -184,34 +184,29 @@ class EvolutionClient:
         return await self._post(url, payload)
 
     async def send_base64_audio(self, number: str, base64_audio: str) -> Dict[str, Any]:
-        """Envia um áudio gravado como PTT (Voice Message)"""
+        """Envia um áudio como PTT (Voice Message) — formato flat v2.3.x"""
         url = "/message/sendWhatsAppAudio/{instance}"
+        # Remove prefixo data URL se presente (ex: "data:audio/mp3;base64,...")
+        audio_data = base64_audio.split(",")[-1] if "," in base64_audio else base64_audio
         payload = {
             "number": number,
-            "options": {
-                "delay": 2000,
-                "presence": "recording",
-                "encoding": True
-            },
-            "audioMessage": {
-                "audio": base64_audio
-            }
+            "audio": audio_data,
+            "delay": 1200,
+            "encoding": True
         }
         return await self._post(url, payload)
 
-    async def send_base64_document(self, number: str, base64_doc: str, filename: str) -> Dict[str, Any]:
-        """Envia um documento (Excel/PDF) em Base64"""
+    async def send_base64_document(self, number: str, base64_doc: str, filename: str, caption: str = "") -> Dict[str, Any]:
+        """Envia um documento (Excel/PDF) em Base64 — formato flat v2.3.x"""
         url = "/message/sendMedia/{instance}"
+        # Remove prefixo data URL se presente
+        media_data = base64_doc.split(",")[-1] if "," in base64_doc else base64_doc
         payload = {
             "number": number,
-            "options": {
-                "delay": 1500,
-                "presence": "composing"
-            },
-            "mediaMessage": {
-                "mediatype": "document",
-                "fileName": filename,
-                "media": base64_doc
-            }
+            "mediatype": "document",
+            "fileName": filename,
+            "media": media_data,
+            "caption": caption,
+            "delay": 1500
         }
         return await self._post(url, payload)
