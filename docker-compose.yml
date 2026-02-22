@@ -60,6 +60,9 @@ services:
       - ALWAYS_ONLINE=true
       - QRCODE_LIMIT=30
       - QRCODE_EXPIRATION_IN_SECONDS=45
+      # Versão do WhatsApp Web para Baileys (vazio = busca automaticamente do GitHub)
+      # Valor default da imagem 2.3000.1015901307 é antigo e rejeitado pelo WhatsApp
+      - CONFIG_SESSION_PHONE_VERSION=
     volumes:
       - evolution_db:/bot/evolution_db
       - evolution_instances:/evolution/instances
