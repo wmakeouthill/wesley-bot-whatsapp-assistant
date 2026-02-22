@@ -21,7 +21,7 @@ class PortfolioRAG:
         self.index_path = "vector_store.faiss"
         self.metadata_path = "vector_metadata.pkl"
         
-        # O novol Google GenAI SDK
+        # O novo Google GenAI SDK
         self.client = genai.Client(api_key=settings.gemini_api_key)
         self.embedding_model = "text-embedding-004"
         

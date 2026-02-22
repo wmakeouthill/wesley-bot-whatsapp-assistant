@@ -56,3 +56,4 @@ evolution_store/
 .vscode/
 .DS_Store
 *.swp
+*.log
