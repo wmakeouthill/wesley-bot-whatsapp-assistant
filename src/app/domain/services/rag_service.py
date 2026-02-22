@@ -7,6 +7,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 from pypdf import PdfReader
 from google import genai
+from google.genai import types
 
 from app.infrastructure.config.settings import settings
 
@@ -65,7 +66,7 @@ class PortfolioRAG:
             response = self.client.models.embed_content(
                 model=self.embedding_model,
                 contents=chunk,
-                task_type="RETRIEVAL_DOCUMENT"
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
             )
             embeddings.append(response.embeddings[0].values)
             self.chunks_metadata.append({"id": i, "text": chunk})
@@ -106,7 +107,7 @@ class PortfolioRAG:
         response = self.client.models.embed_content(
             model=self.embedding_model,
             contents=query,
-            task_type="RETRIEVAL_QUERY"
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
         )
         query_embedding = response.embeddings[0].values
         
