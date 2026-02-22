@@ -155,6 +155,9 @@ jobs:
             echo "EVOLUTION_API_KEY=${{ secrets.EVOLUTION_API_KEY }}" >> .env
             echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
 
+            # Apaga índice FAISS antigo para forçar rebuild com todos os markdowns (projects/ incluído)
+            rm -f vector_store.faiss vector_metadata.pkl
+
             # Recarrega Máquinas
             sudo docker compose down || docker compose down
             # Força pull da imagem evoapicloud (v2.3.7+) antes de subir

@@ -55,13 +55,14 @@ class AtendimentoService:
             
         logger.info(f"[{telefone} / {nome_cliente}]: {texto_recebido}")
         
-        # EASTER EGGS - Testando planilhas e áudio dinâmicos!
+        # EASTER EGGS - Detecta pedidos de áudio ou planilha de forma flexível
         texto_lower = texto_recebido.lower()
-        if "mandar áudio" in texto_lower or "mandar audio" in texto_lower:
+        _quer_audio = any(k in texto_lower for k in ("audio", "áudio", "voz", "voice"))
+        _quer_planilha = any(k in texto_lower for k in ("planilha", "excel", "spreadsheet", "tabela"))
+        if _quer_audio and any(k in texto_lower for k in ("manda", "mandar", "envia", "enviar", "consegue", "pode", "testa", "teste")):
             await self._enviar_audio_teste(telefone, nome_cliente)
             return
-            
-        if "criar planilha" in texto_lower:
+        if _quer_planilha and any(k in texto_lower for k in ("manda", "mandar", "envia", "enviar", "consegue", "pode", "testa", "teste", "cria", "criar", "gera", "gerar")):
             await self._enviar_planilha_teste(telefone, nome_cliente)
             return
 

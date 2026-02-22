@@ -29,15 +29,30 @@ class PortfolioRAG:
         self.chunks_metadata = []
         
     def initialize_or_build(self):
-        """Tenta abrir RAG do disco, se não tiver, recria ele"""
-        if os.path.exists(self.index_path) and os.path.exists(self.metadata_path):
-            logger.info("RAG Index encontrado. Carregando...")
+        """Carrega RAG do disco ou reconstrói se index não existir ou estiver desatualizado.
+        
+        Reconstrói automaticamente se qualquer markdown for mais recente que o index salvo.
+        Isso garante que novos documentos em projects/ sejam sempre indexados.
+        """
+        index_exists = os.path.exists(self.index_path) and os.path.exists(self.metadata_path)
+        needs_rebuild = not index_exists
+
+        if index_exists:
+            index_mtime = os.path.getmtime(self.index_path)
+            md_files = list(self.data_dir.glob("**/*.md"))
+            newest_md = max((f.stat().st_mtime for f in md_files), default=0)
+            if newest_md > index_mtime:
+                logger.info("Markdowns mais recentes que o índice detectados. Recriando RAG...")
+                needs_rebuild = True
+
+        if needs_rebuild:
+            logger.info("Gerando Embeddings de todos os markdowns (incluindo projects/)...")
+            self._build_index()
+        else:
+            logger.info("RAG Index atualizado encontrado. Carregando...")
             self.index = faiss.read_index(self.index_path)
             with open(self.metadata_path, "rb") as f:
                 self.chunks_metadata = pickle.load(f)
-        else:
-            logger.info("Nenhum RAG Index encontrado! Gerando Embeddings dos markdowns...")
-            self._build_index()
 
     def _build_index(self):
         """Lê markdowns do seu portfólio e constrói a Vector Store nativa"""
@@ -46,14 +61,16 @@ class PortfolioRAG:
             return
             
         all_text = ""
-        # Ler apenas os markdowns principais por enquanto para poupar tempo
-        # Dá pra expandir isso para os PDFS (pypdf) depois se houver necessidade real!
-        for md_file in self.data_dir.glob("*.md"):
+        # Lê recursivamente todos os markdowns: raiz + projects/ + trabalhos/ etc.
+        md_files = sorted(self.data_dir.glob("**/*.md"))
+        logger.info(f"RAG: indexando {len(md_files)} arquivos markdown...")
+        for md_file in md_files:
             try:
                 with open(md_file, "r", encoding="utf-8") as f:
                     content = f.read()
-                    # Strip basic markdown if needed or just keep raw text
-                    all_text += f"\n\n--- Documento: {md_file.name} ---\n{content}"
+                    # Usa o caminho relativo como label para facilitar debug
+                    rel = md_file.relative_to(self.data_dir)
+                    all_text += f"\n\n--- Documento: {rel} ---\n{content}"
             except Exception as e:
                 logger.error(f"Erro lendo RAG file {md_file}: {str(e)}")
                 
