@@ -32,9 +32,9 @@ services:
       - LOG_LEVEL=ERROR,WARN
 
       # Banco de dados
-      - DATABASE_ENABLED=true
-      - DATABASE_PROVIDER=sqlite
-      - DATABASE_CONNECTION_URI=sqlite:///bot/evolution_db/evolution.db
+      - DATABASE_ENABLED=false
+      #- DATABASE_PROVIDER=postgresql
+      #- DATABASE_CONNECTION_URI=postgresql://user:password@localhost:5432/evolution?schema=public
 
       # Redis Desativado
       - CACHE_REDIS_ENABLED=false
