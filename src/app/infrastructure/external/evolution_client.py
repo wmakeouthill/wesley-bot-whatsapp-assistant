@@ -178,13 +178,8 @@ class EvolutionClient:
         url = "/message/sendText/{instance}"
         payload = {
             "number": number,
-            "options": {
-                "delay": 1200, # delayzinho para parecer humano
-                "presence": "composing" # mostra "digitando"
-            },
-            "textMessage": {
-                "text": text
-            }
+            "text": text,
+            "delay": 1200
         }
         return await self._post(url, payload)
 
