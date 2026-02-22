@@ -83,13 +83,76 @@ jobs:
             if ! command -v docker &> /dev/null; then
               echo "Instalando Docker e ferramentas básicas do zero..."
               sudo apt-get update
-              sudo apt-get install -y git docker.io docker-compose-v2
+              sudo apt-get install -y git docker.io docker-compose-v2 socat
               sudo systemctl enable --now docker
               sudo usermod -aG docker ${{ secrets.ORACLE_USER }}
               
               # Tenta aplicar os grupos
               newgrp docker || true
             fi
+
+            # Cloudflare WARP — necessário para que o Baileys (WhatsApp) funcione em IPs de data center
+            if ! command -v warp-cli &> /dev/null; then
+              echo "Instalando Cloudflare WARP..."
+              curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+              echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ jammy main' | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+              sudo apt-get update -q && sudo apt-get install -y cloudflare-warp
+              sudo systemctl enable warp-svc
+              sudo systemctl start warp-svc
+              sleep 3
+              warp-cli --accept-tos registration new
+              warp-cli --accept-tos mode proxy
+              warp-cli --accept-tos connect
+
+              # Relay socat: expõe o proxy SOCKS5 do WARP para a rede Docker (172.18.0.1:40000)
+              sudo tee /etc/systemd/system/warp-socat-relay.service > /dev/null << 'SVCEOF'
+[Unit]
+Description=SOCKS5 relay WARP proxy para Docker network
+After=warp-svc.service network.target
+Wants=warp-svc.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat TCP-LISTEN:40000,fork,bind=172.18.0.1 TCP:127.0.0.1:40000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+              sudo tee /etc/systemd/system/warp-connect.service > /dev/null << 'SVCEOF'
+[Unit]
+Description=Conecta Cloudflare WARP no boot
+After=warp-svc.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/warp-cli --accept-tos connect
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+              sudo systemctl daemon-reload
+              sudo systemctl enable warp-socat-relay.service warp-connect.service
+              sudo systemctl start warp-socat-relay.service
+              echo "WARP instalado e relay socat ativo!"
+            fi
+
+            # Garante socat instalado mesmo que Docker já existia
+            if ! command -v socat &> /dev/null; then
+              sudo apt-get install -y socat
+            fi
+
+            # Garante que WARP e relay estão rodando (idempotente)
+            sudo systemctl start warp-svc || true
+            warp-cli --accept-tos connect || true
+            sudo systemctl start warp-socat-relay.service || true
 
             if [ ! -d "/home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant" ]; then
               git clone https://github.com/${{ github.repository }}.git /home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant
