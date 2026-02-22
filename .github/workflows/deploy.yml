@@ -19,13 +19,20 @@ jobs:
       - name: Configurar Credenciais Oracle (OCI)
         run: |
           mkdir -p ~/.oci
-          echo "[DEFAULT]" > ~/.oci/config
-          echo "user=${{ secrets.OCI_USER_OCID }}" >> ~/.oci/config
-          echo "fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> ~/.oci/config
-          echo "tenancy=${{ secrets.OCI_TENANCY_OCID }}" >> ~/.oci/config
-          echo "region=${{ secrets.OCI_REGION }}" >> ~/.oci/config
-          echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
-          echo "${{ secrets.OCI_API_KEY }}" > ~/.oci/oci_api_key.pem
+          cat << 'EOF' > ~/.oci/config
+          [DEFAULT]
+          user=${{ secrets.OCI_USER_OCID }}
+          fingerprint=${{ secrets.OCI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_TENANCY_OCID }}
+          region=${{ secrets.OCI_REGION }}
+          key_file=/home/runner/.oci/oci_api_key.pem
+          EOF
+
+          # Modo seguro de injetar chaves multilinhas no Linux sem quebrar
+          cat << 'EOF' > ~/.oci/oci_api_key.pem
+          ${{ secrets.OCI_API_KEY }}
+          EOF
+
           chmod 600 ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/config
 
@@ -38,22 +45,29 @@ jobs:
 
       - name: (Security) ABRIR Porta 22 SSH Apenas para o GitHub Actions
         run: |
+          set -e
           RUNNER_IP=${{ steps.ip.outputs.ip }}
-          SL_OCID=${{ secrets.OCI_SECURITY_LIST_OCID }}
+          SL_OCID="${{ secrets.OCI_SECURITY_LIST_OCID }}"
 
-          # Coletar regras atuais
-          RULES=$(oci network security-list get --security-list-id $SL_OCID --auth api_key --query 'data."ingress-security-rules"' --output json)
+          if [ -z "$SL_OCID" ]; then
+            echo "❌ ERRO: A variável OCI_SECURITY_LIST_OCID não foi encontrada no Github Secrets ou está vazia!"
+            exit 2
+          fi
 
-          # Criar regra efêmera do Github (Porta 22 / TCP 6)
+          echo "🔄 Buscando regras do Firewall na Oracle..."
+          # Testa autenticação e salva em arquivo para debug
+          if ! oci network security-list get --security-list-id "$SL_OCID" --auth api_key --query 'data."ingress-security-rules"' --output json > rules.json; then
+             echo "❌ ERRO: A Oracle rejeitou a conexão. OCI_API_KEY ou os IDs de Tenancy/User podem estar com espaços em branco!"
+             exit 2
+          fi
+
+          echo "✅ Conexão com a Oracle bem sucedida! Injetando IP $RUNNER_IP..."
+          RULES=$(cat rules.json)
           NEW_RULE='{"source": "'$RUNNER_IP'/32", "protocol": "6", "is-stateless": false, "source-type": "CIDR_BLOCK", "tcp-options": {"destination-port-range": {"max": 22, "min": 22}}}'
+          NEW_RULES=$(echo "$RULES" | jq ". + [$NEW_RULE]")
 
-          # Inserir no JSON da nuvem
-          NEW_RULES=$(echo $RULES | jq ". + [$NEW_RULE]")
-
-          # Atualizar a nuvem
-          oci network security-list update --security-list-id $SL_OCID --ingress-security-rules "$NEW_RULES" --force --auth api_key
-
-          echo "Porta 22 destrancada na Oracle! Aguardando 15 segundos para propagação da nuvem..."
+          oci network security-list update --security-list-id "$SL_OCID" --ingress-security-rules "$NEW_RULES" --force --auth api_key
+          echo "✅ Porta 22 destrancada na Oracle! Aguardando 15s..."
           sleep 15
 
       - name: Executando Deploy Automático via SSH
@@ -100,16 +114,17 @@ jobs:
       - name: (Security) FECHAR Porta 22 SSH e apagar IP do GitHub
         if: always() # Garante que vai rodar MESMO se o deploy SSH explodir/falhar no meio do caminho
         run: |
+          set -e
           RUNNER_IP=${{ steps.ip.outputs.ip }}
-          SL_OCID=${{ secrets.OCI_SECURITY_LIST_OCID }}
+          SL_OCID="${{ secrets.OCI_SECURITY_LIST_OCID }}"
 
-          # Coletar regras atuais com o IP sujo
-          RULES=$(oci network security-list get --security-list-id $SL_OCID --auth api_key --query 'data."ingress-security-rules"' --output json)
+          if [ -z "$SL_OCID" ]; then exit 0; fi # Se falhou antes de ter o OCID, nem tenta rodar o fechamento
 
-          # Filtrar o IP do github pra fora
-          CLEAN_RULES=$(echo $RULES | jq "map(select(.source != \"$RUNNER_IP/32\"))")
+          echo "🔒 Removendo Rastro e trancando porta SSH..."
+          oci network security-list get --security-list-id "$SL_OCID" --auth api_key --query 'data."ingress-security-rules"' --output json > clean_rules.json || exit 0
 
-          # Atualizar nuvem e trancar janela
-          oci network security-list update --security-list-id $SL_OCID --ingress-security-rules "$CLEAN_RULES" --force --auth api_key
+          RULES=$(cat clean_rules.json)
+          CLEAN_RULES=$(echo "$RULES" | jq "map(select(.source != \"$RUNNER_IP/32\"))")
 
-          echo "Sessão concluída e Rastro de IP GitHub Apagado! Porta 22 bloqueada novamente. �"
+          oci network security-list update --security-list-id "$SL_OCID" --ingress-security-rules "$CLEAN_RULES" --force --auth api_key
+          echo "✅ Rastro de IP GitHub Apagado! Porta 22 bloqueada novamente."
