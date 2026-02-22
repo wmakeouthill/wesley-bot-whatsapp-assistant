@@ -30,7 +30,6 @@ services:
 
       # Utilizando Armazenamento Local Bruto (em Disco) ao invés de DB para poupar RAM
       - DATABASE_ENABLED=false
-      - DATABASE_PROVIDER=postgresql
 
       # Redis Desativado
       - CACHE_REDIS_ENABLED=false
