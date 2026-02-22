@@ -103,18 +103,13 @@ class EvolutionClient:
            - "open"       → já conectado, retorna estado
            - qualquer outro → deleta, aguarda limpeza de memória, recria com retry
 
-        O proxy SOCKS5 aponta para o Cloudflare WARP rodando no host (via relay socat).
-        172.18.0.1 é o gateway da rede Docker bot_network (host visto de dentro do container).
+        O roteamento pelo Cloudflare WARP é feito de forma transparente via redsocks + iptables
+        no host (sem necessidade de proxy no payload — évita double-proxying).
         """
         payload = {
             "instanceName": self.instance_name,
             "qrcode": True,
-            "integration": "WHATSAPP-BAILEYS",
-            "proxy": {
-                "host": "172.18.0.1",
-                "port": 40000,
-                "protocol": "socks5"
-            }
+            "integration": "WHATSAPP-BAILEYS"
         }
         try:
             await self._post("/instance/create", payload)
