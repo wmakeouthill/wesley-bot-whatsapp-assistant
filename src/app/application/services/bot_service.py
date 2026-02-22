@@ -33,7 +33,16 @@ class AtendimentoService:
         if body.data.key.fromMe:
             return
             
-        telefone = body.data.key.remoteJid.split('@')[0]
+        # Usa o sender do topo do payload (JID do remetente na API v2)
+        # remoteJid pode ser ID de grupo; sender é sempre o número real
+        remote_jid = body.data.key.remoteJid
+        if '@g.us' in remote_jid:
+            # Mensagem de grupo - por ora ignora
+            logger.info(f"Mensagem de grupo ignorada: {remote_jid}")
+            return
+        telefone = body.sender.split('@')[0] if '@' in body.sender else body.sender
+        if not telefone:
+            telefone = remote_jid.split('@')[0]
         nome_cliente = body.data.pushName or "Cliente"
         id_mensagem = body.data.key.id
         

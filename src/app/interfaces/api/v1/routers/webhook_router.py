@@ -33,15 +33,12 @@ async def receive_evolution_webhook(
     
     # Validação segura (ignora eventos estranhos da api antes de serializar)
     if "event" not in payload:
-        logger.debug(f"Webhook sem campo 'event' ignorado. Keys: {list(payload.keys())}")
+        logger.info(f"Webhook sem 'event' ignorado. Keys: {list(payload.keys())}")
         return {"status": "ignored"}
 
+    import json
     logger.info(f"Webhook recebido: event={payload.get('event')} instance={payload.get('instance')}")
-
-    # LOG TEMPORÁRIO: ver estrutura completa do payload
-    if payload.get('event') == 'messages.upsert':
-        import json
-        logger.info(f"PAYLOAD COMPLETO: {json.dumps(payload, ensure_ascii=False, default=str)}")
+    logger.info(f"PAYLOAD: {json.dumps(payload, ensure_ascii=False, default=str)[:2000]}")
 
     try:
         # Tenta popular o schema
