@@ -93,10 +93,10 @@ jobs:
 
             # Cloudflare WARP — necessário para que o Baileys (WhatsApp) funcione em IPs de data center
             if ! command -v warp-cli &> /dev/null; then
-              echo "Instalando Cloudflare WARP..."
+              echo "Instalando Cloudflare WARP + redsocks..."
               curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
               echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ jammy main' | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-              sudo apt-get update -q && sudo apt-get install -y cloudflare-warp
+              sudo apt-get update -q && sudo apt-get install -y cloudflare-warp redsocks
               sudo systemctl enable warp-svc
               sudo systemctl start warp-svc
               sleep 3
@@ -109,15 +109,30 @@ jobs:
 
               printf '[Unit]\nDescription=Conecta Cloudflare WARP no boot\nAfter=warp-svc.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/warp-cli --accept-tos connect\nRemainAfterExit=yes\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/warp-connect.service > /dev/null
 
+              # redsocks: proxy transparente SOCKS5 para containers Docker
+              printf 'base {\n    log_debug = off;\n    log_info = on;\n    log = "stderr";\n    daemon = off;\n    redirector = iptables;\n}\nredsocks {\n    local_ip = 0.0.0.0;\n    local_port = 12345;\n    ip = 127.0.0.1;\n    port = 40000;\n    type = socks5;\n}\n' | sudo tee /etc/redsocks.conf > /dev/null
+
+              printf '[Unit]\nDescription=RedSocks SOCKS5 Transparent Proxy (via WARP)\nAfter=network.target warp-svc.service\nWants=warp-svc.service\n\n[Service]\nType=simple\nExecStart=/usr/sbin/redsocks -c /etc/redsocks.conf\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/redsocks.service > /dev/null
+
+              # Script iptables para rotear todo TCP do Docker bot_network pelo redsocks -> WARP
+              printf '#!/bin/bash\niptables -t nat -D PREROUTING -s 172.18.0.0/16 -p tcp -j DOCKER_WARP 2>/dev/null || true\niptables -t nat -F DOCKER_WARP 2>/dev/null || true\niptables -t nat -X DOCKER_WARP 2>/dev/null || true\niptables -t nat -N DOCKER_WARP\niptables -t nat -A DOCKER_WARP -d 0.0.0.0/8 -j RETURN\niptables -t nat -A DOCKER_WARP -d 10.0.0.0/8 -j RETURN\niptables -t nat -A DOCKER_WARP -d 100.64.0.0/10 -j RETURN\niptables -t nat -A DOCKER_WARP -d 127.0.0.0/8 -j RETURN\niptables -t nat -A DOCKER_WARP -d 169.254.0.0/16 -j RETURN\niptables -t nat -A DOCKER_WARP -d 172.16.0.0/12 -j RETURN\niptables -t nat -A DOCKER_WARP -d 192.168.0.0/16 -j RETURN\niptables -t nat -A DOCKER_WARP -d 224.0.0.0/4 -j RETURN\niptables -t nat -A DOCKER_WARP -d 240.0.0.0/4 -j RETURN\niptables -t nat -A DOCKER_WARP -p tcp -j REDIRECT --to-ports 12345\niptables -t nat -A PREROUTING -s 172.18.0.0/16 -p tcp -j DOCKER_WARP\necho "iptables WARP rules applied"\n' | sudo tee /usr/local/bin/setup-warp-iptables.sh > /dev/null
+              sudo chmod +x /usr/local/bin/setup-warp-iptables.sh
+
+              printf '[Unit]\nDescription=iptables rules for WARP transparent proxy\nAfter=network.target docker.service redsocks.service\nRequires=redsocks.service\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/setup-warp-iptables.sh\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/warp-iptables.service > /dev/null
+
               sudo systemctl daemon-reload
-              sudo systemctl enable warp-socat-relay.service warp-connect.service
-              sudo systemctl start warp-socat-relay.service
-              echo "WARP instalado e relay socat ativo!"
+              sudo systemctl enable warp-socat-relay.service warp-connect.service redsocks.service warp-iptables.service
+              sudo systemctl start warp-socat-relay.service redsocks.service
+              sudo /usr/local/bin/setup-warp-iptables.sh
+              echo "WARP + redsocks + iptables instalados e ativos!"
             fi
 
-            # Garante socat instalado mesmo que Docker já existia
+            # Garante socat e redsocks instalados mesmo que Docker já existia
             if ! command -v socat &> /dev/null; then
               sudo apt-get install -y socat
+            fi
+            if ! command -v redsocks &> /dev/null; then
+              sudo apt-get install -y redsocks
             fi
 
             # Garante que WARP e relay estão rodando (idempotente)
@@ -143,6 +158,15 @@ jobs:
             # Recarrega Máquinas
             sudo docker compose down || docker compose down
             sudo docker compose up -d --build || docker compose up -d --build
+
+            # Garante que WARP e redsocks estao rodando apos o deploy
+            sudo systemctl start warp-svc || true
+            warp-cli --accept-tos connect || true
+            sudo systemctl start redsocks.service || true
+            sudo systemctl start warp-socat-relay.service || true
+
+            # Aplica regras iptables (recriam-se apos docker compose down/up que pode resetar chains)
+            bash /usr/local/bin/setup-warp-iptables.sh || true
 
             echo "Pipeline Concluído com Sucesso! 🚀"
 
