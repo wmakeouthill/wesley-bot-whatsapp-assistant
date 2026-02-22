@@ -105,38 +105,9 @@ jobs:
               warp-cli --accept-tos connect
 
               # Relay socat: expõe o proxy SOCKS5 do WARP para a rede Docker (172.18.0.1:40000)
-              sudo tee /etc/systemd/system/warp-socat-relay.service > /dev/null << 'SVCEOF'
-[Unit]
-Description=SOCKS5 relay WARP proxy para Docker network
-After=warp-svc.service network.target
-Wants=warp-svc.service
+              printf '[Unit]\nDescription=SOCKS5 relay WARP proxy para Docker network\nAfter=warp-svc.service network.target\nWants=warp-svc.service\n\n[Service]\nType=simple\nExecStart=/usr/bin/socat TCP-LISTEN:40000,fork,bind=172.18.0.1 TCP:127.0.0.1:40000\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/warp-socat-relay.service > /dev/null
 
-[Service]
-Type=simple
-ExecStart=/usr/bin/socat TCP-LISTEN:40000,fork,bind=172.18.0.1 TCP:127.0.0.1:40000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-              sudo tee /etc/systemd/system/warp-connect.service > /dev/null << 'SVCEOF'
-[Unit]
-Description=Conecta Cloudflare WARP no boot
-After=warp-svc.service network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/warp-cli --accept-tos connect
-RemainAfterExit=yes
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
+              printf '[Unit]\nDescription=Conecta Cloudflare WARP no boot\nAfter=warp-svc.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/warp-cli --accept-tos connect\nRemainAfterExit=yes\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/warp-connect.service > /dev/null
 
               sudo systemctl daemon-reload
               sudo systemctl enable warp-socat-relay.service warp-connect.service
