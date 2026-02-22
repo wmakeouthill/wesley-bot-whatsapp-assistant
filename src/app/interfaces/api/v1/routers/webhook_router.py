@@ -38,6 +38,11 @@ async def receive_evolution_webhook(
 
     logger.info(f"Webhook recebido: event={payload.get('event')} instance={payload.get('instance')}")
 
+    # LOG TEMPORÁRIO: ver estrutura completa do payload
+    if payload.get('event') == 'messages.upsert':
+        import json
+        logger.info(f"PAYLOAD COMPLETO: {json.dumps(payload, ensure_ascii=False, default=str)}")
+
     try:
         # Tenta popular o schema
         body = WebhookBody(**payload)
