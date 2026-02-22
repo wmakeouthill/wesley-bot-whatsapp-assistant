@@ -101,9 +101,10 @@ jobs:
             git reset --hard origin/main
             git pull origin main
 
-            # Recria as de ambiente pra IA
+            # Recria as envs pra IA
             echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
             echo "EVOLUTION_API_KEY=${{ secrets.EVOLUTION_API_KEY }}" >> .env
+            echo "DATABASE_CONNECTION_URI=${{ secrets.DATABASE_CONNECTION_URI }}" >> .env
 
             # Recarrega Máquinas
             sudo docker compose down || docker compose down

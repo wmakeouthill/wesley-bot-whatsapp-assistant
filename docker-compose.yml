@@ -33,8 +33,8 @@ services:
 
       # Banco de dados
       - DATABASE_ENABLED=false
-      #- DATABASE_PROVIDER=postgresql
-      #- DATABASE_CONNECTION_URI=postgresql://user:password@localhost:5432/evolution?schema=public
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=${DATABASE_CONNECTION_URI:-postgresql://fakeuser:pass@localhost:5432/evolution}
 
       # Redis Desativado
       - CACHE_REDIS_ENABLED=false
