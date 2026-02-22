@@ -25,7 +25,7 @@ WORKDIR /app
 COPY pyproject.toml poetry.lock* ./
 
 # Instala todas as dependências do projeto
-RUN poetry install --no-root --no-interaction --no-ansi
+RUN poetry install --no-root --no-interaction --no-ansi && pip install asyncpg>=0.30.0 --quiet
 
 # Copia o resto da aplicação
 COPY . .

@@ -33,7 +33,7 @@ class AtendimentoService:
         if body.data.key.fromMe:
             return
             
-        # Em mensagens com LID (@lid), usar o remoteJid completo para responder
+        # Em mensagens com LID (@lid), resolver para número real via banco da Evolution
         # Em mensagens de grupo (@g.us), ignorar por ora
         # Em mensagens normais (@s.whatsapp.net), usar só o número
         remote_jid = body.data.key.remoteJid
@@ -41,8 +41,11 @@ class AtendimentoService:
             logger.info(f"Mensagem de grupo ignorada: {remote_jid}")
             return
         elif '@lid' in remote_jid:
-            # LID: usar JID completo para o sendText
-            telefone = remote_jid
+            from app.infrastructure.db.lid_resolver import resolver_lid
+            telefone = await resolver_lid(remote_jid, body.instance)
+            if not telefone:
+                logger.warning(f"LID sem número real mapeado ainda: {remote_jid} — aguardando próxima mensagem")
+                return
         else:
             # @s.whatsapp.net: extrair só o número
             telefone = remote_jid.split('@')[0]

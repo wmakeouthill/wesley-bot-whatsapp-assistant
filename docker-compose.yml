@@ -18,6 +18,8 @@ services:
       - EVOLUTION_API_URL=http://bot_evolution_api:8080
       # URL pública para o Evolution API chamar o bot (via IP do VPS)
       - WEBHOOK_URL=http://${VPS_IP:-163.176.194.195}:8000/webhooks/evolution
+      # Acesso direto ao banco da Evolution para resolver LID → telefone
+      - EVOLUTION_DB_URL=postgresql://bot_user:${POSTGRES_PASSWORD}@bot_postgres:5432/evolution_db
     networks:
       - bot_network
 
@@ -35,15 +37,15 @@ services:
       - DOCKER_ENV=true
       - LOG_LEVEL=ERROR,WARN
 
-      # Banco de dados - apenas credenciais de auth (poucos KB), mensagens/contatos desativados
+      # Banco de dados - persiste tudo para resolver LID → telefone
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://bot_user:${POSTGRES_PASSWORD}@bot_postgres:5432/evolution_db?schema=public
       - DATABASE_SAVE_DATA_INSTANCE=true
-      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
-      - DATABASE_SAVE_DATA_MESSAGE_UPDATE=false
-      - DATABASE_SAVE_DATA_CONTACTS=false
-      - DATABASE_SAVE_DATA_CHATS=false
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_DATA_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_CHATS=true
       - DATABASE_SAVE_MESSAGE_STAGE=false
 
       # Redis - necessário para QR code buffering (~15MB)

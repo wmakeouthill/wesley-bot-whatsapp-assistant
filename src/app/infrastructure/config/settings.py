@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     
     # Database Settings
     database_url: str = "sqlite+aiosqlite:///./bot_data.db"
+    # Banco da Evolution API para resolver LID → telefone real
+    evolution_db_url: str = "postgresql://bot_user:@bot_postgres:5432/evolution_db"
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
