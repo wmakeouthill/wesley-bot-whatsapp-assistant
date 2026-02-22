@@ -1,4 +1,4 @@
-name: Deploy Oracle VPS
+name: Deploy Oracle VPS Seguro
 on:
   push:
     branches:
@@ -11,6 +11,51 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Instalar OCI CLI (Oracle Cloud Infrastructure CLI)
+        run: |
+          python -m pip install --upgrade pip
+          pip install oci-cli
+
+      - name: Configurar Credenciais Oracle (OCI)
+        run: |
+          mkdir -p ~/.oci
+          echo "[DEFAULT]" > ~/.oci/config
+          echo "user=${{ secrets.OCI_USER_OCID }}" >> ~/.oci/config
+          echo "fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> ~/.oci/config
+          echo "tenancy=${{ secrets.OCI_TENANCY_OCID }}" >> ~/.oci/config
+          echo "region=${{ secrets.OCI_REGION }}" >> ~/.oci/config
+          echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
+          echo "${{ secrets.OCI_API_KEY }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/config
+
+      - name: Descobrir IP Dinâmico do GitHub Actions
+        id: ip
+        run: |
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "ip=$RUNNER_IP" >> $GITHUB_OUTPUT
+          echo "IP do Github Actions descoberto: $RUNNER_IP"
+
+      - name: (Security) ABRIR Porta 22 SSH Apenas para o GitHub Actions
+        run: |
+          RUNNER_IP=${{ steps.ip.outputs.ip }}
+          SL_OCID=${{ secrets.OCI_SECURITY_LIST_OCID }}
+
+          # Coletar regras atuais
+          RULES=$(oci network security-list get --security-list-id $SL_OCID --auth api_key --query 'data."ingress-security-rules"' --output json)
+
+          # Criar regra efêmera do Github (Porta 22 / TCP 6)
+          NEW_RULE='{"source": "'$RUNNER_IP'/32", "protocol": "6", "is-stateless": false, "source-type": "CIDR_BLOCK", "tcp-options": {"destination-port-range": {"max": 22, "min": 22}}}'
+
+          # Inserir no JSON da nuvem
+          NEW_RULES=$(echo $RULES | jq ". + [$NEW_RULE]")
+
+          # Atualizar a nuvem
+          oci network security-list update --security-list-id $SL_OCID --ingress-security-rules "$NEW_RULES" --force --auth api_key
+
+          echo "Porta 22 destrancada na Oracle! Aguardando 15 segundos para propagação da nuvem..."
+          sleep 15
+
       - name: Executando Deploy Automático via SSH
         uses: appleboy/ssh-action@master
         with:
@@ -18,27 +63,53 @@ jobs:
           username: ${{ secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_KEY }}
           script: |
-            echo "Iniciando Pipeline de Deploy..."
+            echo "Iniciando Pipeline de Deploy Seguro..."
 
-            # Se a pasta não existir no servidor, ele faz o clone
+            # Se a VM Ubuntu estiver 100% crua, o Github Actions instala tudo sozinho agora:
+            if ! command -v docker &> /dev/null; then
+              echo "Instalando Docker e ferramentas básicas do zero..."
+              sudo apt-get update
+              sudo apt-get install -y git docker.io docker-compose-v2
+              sudo systemctl enable --now docker
+              sudo usermod -aG docker ${{ secrets.ORACLE_USER }}
+              
+              # Tenta aplicar os grupos
+              newgrp docker || true
+            fi
+
             if [ ! -d "/home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant" ]; then
               git clone https://github.com/${{ github.repository }}.git /home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant
             fi
 
-            # Entra na pasta do repo
             cd /home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant
 
-            # Força o pull das atualizações mais recentes e descarta mudanças locais conflitantes
             git fetch --all
             git reset --hard origin/main
             git pull origin main
 
-            # Recria as variáveis de ambiente pra IA e Evolution
+            # Recria as de ambiente pra IA
             echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
             echo "EVOLUTION_API_KEY=${{ secrets.EVOLUTION_API_KEY }}" >> .env
 
             # Recarrega Máquinas
-            docker compose down
-            docker compose up -d --build
+            sudo docker compose down || docker compose down
+            sudo docker compose up -d --build || docker compose up -d --build
 
             echo "Pipeline Concluído com Sucesso! 🚀"
+
+      - name: (Security) FECHAR Porta 22 SSH e apagar IP do GitHub
+        if: always() # Garante que vai rodar MESMO se o deploy SSH explodir/falhar no meio do caminho
+        run: |
+          RUNNER_IP=${{ steps.ip.outputs.ip }}
+          SL_OCID=${{ secrets.OCI_SECURITY_LIST_OCID }}
+
+          # Coletar regras atuais com o IP sujo
+          RULES=$(oci network security-list get --security-list-id $SL_OCID --auth api_key --query 'data."ingress-security-rules"' --output json)
+
+          # Filtrar o IP do github pra fora
+          CLEAN_RULES=$(echo $RULES | jq "map(select(.source != \"$RUNNER_IP/32\"))")
+
+          # Atualizar nuvem e trancar janela
+          oci network security-list update --security-list-id $SL_OCID --ingress-security-rules "$CLEAN_RULES" --force --auth api_key
+
+          echo "Sessão concluída e Rastro de IP GitHub Apagado! Porta 22 bloqueada novamente. �"
