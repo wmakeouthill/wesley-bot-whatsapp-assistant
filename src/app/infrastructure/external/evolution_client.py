@@ -80,7 +80,7 @@ class EvolutionClient:
         """Retorna o estado de conexão atual da instância"""
         return await self._get("/instance/connectionState/{instance}")
 
-    async def _await_qr(self, retries: int = 10, interval: float = 2.0) -> Dict[str, Any]:
+    async def _await_qr(self, retries: int = 15, interval: float = 3.0) -> Dict[str, Any]:
         """Aguarda o QR Code ficar disponível, tentando até `retries` vezes com `interval` segundos entre cada."""
         for attempt in range(retries):
             await asyncio.sleep(interval)
@@ -98,10 +98,10 @@ class EvolutionClient:
         """Cria a instância se não existir, senão reconecta ou recria para gerar QR.
         
         Fluxo:
-        1. Tenta criar → retorna JSON com qrcode.base64 (instância nova)
+        1. Tenta criar → aguarda QR via polling
         2. Se 403 (já existe) → verifica estado:
            - "open"       → já conectado, retorna estado
-           - qualquer outro → deleta e recria para gerar QR fresco
+           - qualquer outro → deleta, aguarda limpeza de memória, recria com retry
         """
         payload = {
             "instanceName": self.instance_name,
@@ -110,27 +110,43 @@ class EvolutionClient:
         }
         try:
             await self._post("/instance/create", payload)
-            # QR é gerado de forma assíncrona pela Evolution — aguarda ficar disponível
             return await self._await_qr()
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403:
-                logger.info("Instância já existe, verificando estado...")
-                try:
-                    state = await self.connection_state()
-                    status = state.get("instance", {}).get("state", "")
-                except Exception:
-                    status = ""
+            if e.response.status_code != 403:
+                raise
 
-                if status == "open":
-                    logger.info("Instância já conectada.")
-                    return {"status": "already_connected", "instance": state}
+            logger.info("Instância já existe, verificando estado...")
+            try:
+                state = await self.connection_state()
+                status = state.get("instance", {}).get("state", "")
+            except Exception:
+                status = ""
 
-                # Desconectada/connecting — deleta e recria para QR fresco
-                logger.info(f"Instância no estado '{status}', deletando para recriar QR...")
+            if status == "open":
+                logger.info("Instância já conectada.")
+                return {"status": "already_connected", "instance": state}
+
+            # Desconectada/connecting — deleta e aguarda limpeza de memória antes de recriar
+            logger.info(f"Instância no estado '{status}', deletando para recriar QR...")
+            try:
                 await self.delete_instance()
-                await self._post("/instance/create", payload)
-                return await self._await_qr()
-            raise
+            except Exception:
+                pass  # 404 se já foi deletada — não importa
+
+            # Aguarda Evolution API liberar o nome da instância da memória
+            await asyncio.sleep(3)
+
+            # Tenta recriar com retry (pode ainda estar em memória por breve momento)
+            for attempt in range(5):
+                try:
+                    await self._post("/instance/create", payload)
+                    return await self._await_qr()
+                except httpx.HTTPStatusError as retry_e:
+                    if retry_e.response.status_code == 403 and attempt < 4:
+                        logger.warning(f"Instância ainda em memória, aguardando (tentativa {attempt + 1}/5)...")
+                        await asyncio.sleep(2)
+                        continue
+                    raise
 
     async def send_text_message(self, number: str, text: str) -> Dict[str, Any]:
         """Envia uma mensagem de texto simples"""
