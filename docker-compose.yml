@@ -31,10 +31,16 @@ services:
       - DOCKER_ENV=true
       - LOG_LEVEL=ERROR,WARN
 
-      # Banco de dados
-      - DATABASE_ENABLED=false
+      # Banco de dados - apenas credenciais de auth (poucos KB), mensagens/contatos desativados
+      - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://bot_user:${POSTGRES_PASSWORD}@bot_postgres:5432/evolution_db?schema=public
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=false
+      - DATABASE_SAVE_DATA_MESSAGE_UPDATE=false
+      - DATABASE_SAVE_DATA_CONTACTS=false
+      - DATABASE_SAVE_DATA_CHATS=false
+      - DATABASE_SAVE_MESSAGE_STAGE=false
 
       # Redis Desativado
       - CACHE_REDIS_ENABLED=false
