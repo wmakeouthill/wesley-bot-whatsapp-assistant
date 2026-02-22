@@ -81,7 +81,10 @@ CONTEXTO DEDUZIDO DO PORTFÓLIO:
             resposta_ia = "Ops, dei uma travadinha processando seu portfólio. Manda de novo?"
         
         # Envia a resposta final para o cliente
-        await self.evolution_client.send_text_message(telefone, resposta_ia)
+        try:
+            await self.evolution_client.send_text_message(telefone, resposta_ia)
+        except Exception as e:
+            logger.error(f"Erro ao enviar resposta para {telefone}: {e}")
         
     def _extrair_texto(self, body: WebhookBody) -> Optional[str]:
         """Tenta achar texto em mensagem simples ou formatada."""
