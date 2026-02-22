@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import logging
 from typing import Optional, Dict, Any
@@ -79,6 +80,20 @@ class EvolutionClient:
         """Retorna o estado de conexão atual da instância"""
         return await self._get("/instance/connectionState/{instance}")
 
+    async def _await_qr(self, retries: int = 10, interval: float = 2.0) -> Dict[str, Any]:
+        """Aguarda o QR Code ficar disponível, tentando até `retries` vezes com `interval` segundos entre cada."""
+        for attempt in range(retries):
+            await asyncio.sleep(interval)
+            try:
+                data = await self.connect_instance()
+                if data.get("base64"):
+                    logger.info(f"QR Code obtido na tentativa {attempt + 1}.")
+                    return data
+                logger.info(f"QR ainda não disponível (tentativa {attempt + 1}/{retries}), aguardando...")
+            except Exception as e:
+                logger.warning(f"Erro ao buscar QR na tentativa {attempt + 1}: {e}")
+        raise RuntimeError("QR Code não ficou disponível após múltiplas tentativas. Tente novamente.")
+
     async def create_instance(self) -> Dict[str, Any]:
         """Cria a instância se não existir, senão reconecta ou recria para gerar QR.
         
@@ -94,7 +109,9 @@ class EvolutionClient:
             "integration": "WHATSAPP-BAILEYS"
         }
         try:
-            return await self._post("/instance/create", payload)
+            await self._post("/instance/create", payload)
+            # QR é gerado de forma assíncrona pela Evolution — aguarda ficar disponível
+            return await self._await_qr()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
                 logger.info("Instância já existe, verificando estado...")
@@ -111,7 +128,8 @@ class EvolutionClient:
                 # Desconectada/connecting — deleta e recria para QR fresco
                 logger.info(f"Instância no estado '{status}', deletando para recriar QR...")
                 await self.delete_instance()
-                return await self._post("/instance/create", payload)
+                await self._post("/instance/create", payload)
+                return await self._await_qr()
             raise
 
     async def send_text_message(self, number: str, text: str) -> Dict[str, Any]:
