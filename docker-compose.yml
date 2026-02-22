@@ -25,9 +25,11 @@ services:
     restart: always
     ports:
       - "8080:8080"
+    depends_on:
+      - bot_redis
     environment:
       # Configurações do servidor
-      - SERVER_URL=http://localhost:8080
+      - SERVER_URL=http://${VPS_IP:-163.176.194.195}:8080
       - DOCKER_ENV=true
       - LOG_LEVEL=ERROR,WARN
 
@@ -42,8 +44,11 @@ services:
       - DATABASE_SAVE_DATA_CHATS=false
       - DATABASE_SAVE_MESSAGE_STAGE=false
 
-      # Redis Desativado
-      - CACHE_REDIS_ENABLED=false
+      # Redis - necessário para QR code buffering (~15MB)
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://bot_redis:6379/1
+      - CACHE_REDIS_PREFIX_KEY=evolution
+      - CACHE_REDIS_SAVE_INSTANCES=false
 
       # Segurança da API
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
@@ -53,10 +58,20 @@ services:
       - WA_SESSION_ID=wesley_bot_session
       - DEL_INSTANCE=false
       - ALWAYS_ONLINE=true
+      - QRCODE_LIMIT=30
+      - QRCODE_EXPIRATION_IN_SECONDS=45
     volumes:
       - evolution_db:/bot/evolution_db
       - evolution_instances:/evolution/instances
       - evolution_store:/evolution/store
+    networks:
+      - bot_network
+
+  bot_redis:
+    image: redis:7-alpine
+    container_name: bot_redis
+    restart: always
+    command: redis-server --maxmemory 50mb --maxmemory-policy allkeys-lru --save ""
     networks:
       - bot_network
 
