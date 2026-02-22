@@ -55,45 +55,36 @@ class AtendimentoService:
             
         logger.info(f"[{telefone} / {nome_cliente}]: {texto_recebido}")
         
-        # EASTER EGGS - Detecta pedidos de áudio ou planilha de forma flexível
         texto_lower = texto_recebido.lower()
-        _quer_audio = any(k in texto_lower for k in ("audio", "áudio", "voz", "voice"))
-        _quer_planilha = any(k in texto_lower for k in ("planilha", "excel", "spreadsheet", "tabela"))
-        if _quer_audio and any(k in texto_lower for k in ("manda", "mandar", "envia", "enviar", "consegue", "pode", "testa", "teste")):
-            await self._enviar_audio_teste(telefone, nome_cliente)
+
+        # Detecta o FORMATO de resposta pedido pelo usuário
+        _quer_audio = any(k in texto_lower for k in (
+            "audio", "áudio", "voz", "voice", "fale", "falar", "fala", "diga", "dizer"
+        ))
+        _quer_planilha = any(k in texto_lower for k in (
+            "planilha", "excel", "spreadsheet", "tabela"
+        ))
+
+        # 1. Contexto RAG com top_k dinâmico por intenção
+        contexto_rag = self.rag.retrieve_smart(texto_recebido)
+
+        # 2. Injeta markdown completo do projeto se mencionado (on-demand)
+        projeto_md = self.rag.load_project_if_mentioned(texto_recebido)
+        if projeto_md:
+            contexto = projeto_md + "\n---\n" + contexto_rag
+        else:
+            contexto = contexto_rag
+
+        if _quer_planilha:
+            await self._responder_como_planilha(telefone, nome_cliente, texto_recebido, contexto)
             return
-        if _quer_planilha and any(k in texto_lower for k in ("manda", "mandar", "envia", "enviar", "consegue", "pode", "testa", "teste", "cria", "criar", "gera", "gerar")):
-            await self._enviar_planilha_teste(telefone, nome_cliente)
+
+        if _quer_audio:
+            await self._responder_como_audio(telefone, nome_cliente, texto_recebido, contexto)
             return
 
-        # 1. Puxa contexto do RAG local via similaridade (FAISS)
-        contexto = self.rag.retrieve(texto_recebido, top_k=3)
-        
-        # 2. Monta Prompt final (Para o bot ser um assistente do Wesley)
-        prompt = f"""
-Você é o Assistente Virtual Oficial do Wesley no WhatsApp.
-Seja amigável, direto, e natural em suas respostas. O usuário se chama {nome_cliente}.
-O usuário enviou a seguinte mensagem: "{texto_recebido}"
-
-Abaixo está o CONTEXTO contendo as informações sobre os certificados, habilidades e currículo do Wesley.
-Baseado ESTREITAMENTE nesse contexto, responda a pergunta do usuário.
-Se a informação não estiver no contexto, diga que você vai anotar a dúvida para o próprio Wesley responder depois, e NUNCA invente informações.
-
-CONTEXTO DEDUZIDO DO PORTFÓLIO:
-{contexto}
-"""
-        # 3. Manda para a Gemini gerar a resposta
-        try:
-            response = self.llm_client.models.generate_content(
-                model=settings.gemini_model,
-                contents=prompt,
-            )
-            resposta_ia = response.text
-        except Exception as e:
-            logger.error(f"Erro chamando IA: {e}")
-            resposta_ia = "Ops, dei uma travadinha processando seu portfólio. Manda de novo?"
-        
-        # Envia a resposta final para o cliente
+        # Resposta em texto normal
+        resposta_ia = await self._gerar_resposta_texto(nome_cliente, texto_recebido, contexto)
         try:
             await self.evolution_client.send_text_message(telefone, resposta_ia)
         except Exception as e:
@@ -113,37 +104,91 @@ CONTEXTO DEDUZIDO DO PORTFÓLIO:
             
         return None
 
+    async def _gerar_resposta_texto(self, nome_cliente: str, texto: str, contexto: str) -> str:
+        """Gera resposta em texto via Gemini com contexto RAG."""
+        prompt = f"""
+Você é o Assistente Virtual Oficial do Wesley no WhatsApp.
+Seja amigável, direto, e natural em suas respostas. O usuário se chama {nome_cliente}.
+O usuário enviou a seguinte mensagem: "{texto}"
+
+Abaixo está o CONTEXTO contendo as informações sobre os certificados, habilidades e currículo do Wesley.
+Baseado ESTREITAMENTE nesse contexto, responda a pergunta do usuário.
+Se a informação não estiver no contexto, diga que você vai anotar a dúvida para o próprio Wesley responder depois, e NUNCA invente informações.
+
+CONTEXTO DEDUZIDO DO PORTFÓLIO:
+{contexto}
+"""
+        try:
+            response = self.llm_client.models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+            )
+            return response.text
+        except Exception as e:
+            logger.error(f"Erro chamando IA: {e}")
+            return "Ops, dei uma travadinha processando seu portfólio. Manda de novo?"
+
+    async def _responder_como_audio(self, telefone: str, nome: str, texto: str, contexto: str):
+        """Gera resposta via RAG+Gemini e envia como áudio de voz (TTS)."""
+        resposta_texto = await self._gerar_resposta_texto(nome, texto, contexto)
+        logger.info(f"Gerando áudio TTS para {telefone}: {resposta_texto[:60]}...")
+        try:
+            tts = gTTS(text=resposta_texto, lang='pt', slow=False)
+            audio_io = io.BytesIO()
+            tts.write_to_fp(audio_io)
+            audio_io.seek(0)
+            b64 = base64.b64encode(audio_io.read()).decode('utf-8')
+            await self.evolution_client.send_base64_audio(telefone, b64)
+        except Exception as e:
+            logger.error(f"Erro enviando áudio para {telefone}: {e}")
+            # Fallback: envia como texto
+            await self.evolution_client.send_text_message(telefone, resposta_texto)
+
+    async def _responder_como_planilha(self, telefone: str, nome: str, texto: str, contexto: str):
+        """Gera planilha real via Gemini a partir do contexto RAG e envia como Excel."""
+        prompt_planilha = f"""
+Você é o Assistente do Wesley. O usuário pediu: "{texto}"
+
+Com base neste contexto do portfólio do Wesley:
+{contexto}
+
+Extraia as informações pedidas e retorne SOMENTE as linhas da planilha, sem texto extra.
+Formato obrigatório: cada linha separada por \n, colunas separadas por | (pipe).
+A primeira linha é o cabeçalho. Exemplo:
+Tecnologia | Nível | Categoria
+Python | Avançado | Backend
+"""
+        try:
+            response = self.llm_client.models.generate_content(
+                model=settings.gemini_model, contents=prompt_planilha
+            )
+            linhas_raw = response.text.strip().split('\n')
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Portfolio Wesley"
+            for linha in linhas_raw:
+                if '|' in linha:
+                    colunas = [c.strip() for c in linha.split('|')]
+                    ws.append(colunas)
+
+            excel_io = io.BytesIO()
+            wb.save(excel_io)
+            excel_io.seek(0)
+            b64 = base64.b64encode(excel_io.read()).decode('utf-8')
+            caption = f"Planilha gerada para {nome} com base no portfólio do Wesley!"
+            await self.evolution_client.send_base64_document(telefone, b64, "Wesley_Portfolio.xlsx", caption)
+        except Exception as e:
+            logger.error(f"Erro enviando planilha para {telefone}: {e}")
+            # Fallback: envia como texto
+            resposta = await self._gerar_resposta_texto(nome, texto, contexto)
+            await self.evolution_client.send_text_message(telefone, resposta)
+
     async def _enviar_audio_teste(self, telefone: str, nome: str):
-        """Usa Google TTS para gerar voz de baixa latência em RAM"""
-        mensagem = f"Claro, {nome}! Eu sou um robô que economiza sua memória e consigo te mandar um áudio da Oracle em tempo real."
-        logger.info(f"Gerando áudio TTS para {telefone}...")
-        
-        tts = gTTS(text=mensagem, lang='pt', slow=False)
-        audio_io = io.BytesIO()
-        tts.write_to_fp(audio_io)
-        audio_io.seek(0)
-        
-        base64_audio = base64.b64encode(audio_io.read()).decode('utf-8')
-        base16_header = f"data:audio/mp3;base64,{base64_audio}"
-        await self.evolution_client.send_base64_audio(telefone, base16_header)
-        
+        """Compat: delega para _responder_como_audio com mensagem genérica."""
+        await self._responder_como_audio(telefone, nome, "Fale sobre o Wesley e suas habilidades", "")
+
     async def _enviar_planilha_teste(self, telefone: str, nome: str):
-        """Usa OpenPyXL para gerar uma tabela Excel limpa em RAM"""
-        logger.info(f"Gerando planilha em memória para {telefone}...")
-        
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Relatório Oracle"
-        
-        ws.append(["Nome do Servidor", "RAM", "Uso CPU", "Status"])
-        ws.append(["Oracle A1", "1 GB (Usado)", "5%", "Online"])
-        ws.append(["Evolution API", "Dispensada", "0%", "Offline (Storage Mode)"])
-        ws.append(["Faiss RAG", "2 MB", "1%", "Leve e Rápido"])
-        
-        excel_io = io.BytesIO()
-        wb.save(excel_io)
-        excel_io.seek(0)
-        
-        base64_excel = base64.b64encode(excel_io.read()).decode('utf-8')
-        base16_header = f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64_excel}"
-        await self.evolution_client.send_base64_document(telefone, base16_header, "Resumo_Performance.xlsx")
+        """Compat: delega para _responder_como_planilha com pedido genérico."""
+        contexto = self.rag.retrieve_smart("stacks tecnologias habilidades Wesley")
+        await self._responder_como_planilha(telefone, nome, "Liste as principais tecnologias e stacks do Wesley", contexto)
