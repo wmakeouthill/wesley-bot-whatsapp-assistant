@@ -164,6 +164,16 @@ jobs:
             sudo docker compose pull evolution-api || docker compose pull evolution-api || true
             sudo docker compose up -d --build || docker compose up -d --build
 
+            # Falha o deploy se os containers não subirem (evita "sucesso" falso)
+            sleep 5
+            RUNNING=$(sudo docker compose ps -a --status running -q 2>/dev/null | wc -l)
+            if [ "$RUNNING" -lt 3 ]; then
+              echo "ERRO: Containers nao estao rodando apos o deploy (running=$RUNNING)."
+              sudo docker compose ps -a
+              sudo docker compose logs --tail 80 api 2>/dev/null || true
+              exit 1
+            fi
+
             # Garante que WARP e redsocks estao rodando apos o deploy
             sudo systemctl start warp-svc || true
             warp-cli --accept-tos connect || true

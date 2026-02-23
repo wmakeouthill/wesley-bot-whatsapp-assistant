@@ -25,6 +25,9 @@ WORKDIR /app
 # poetry.lock é necessário para instalação reproduzível (inclui asyncpg para PostgreSQL assíncrono)
 COPY pyproject.toml poetry.lock ./
 
+# Sincroniza lock com pyproject.toml (evita falha quando lock está desatualizado)
+RUN poetry lock --no-update
+
 # Instala todas as dependências do projeto (inclui asyncpg para SQLAlchemy async)
 RUN poetry install --no-root --no-interaction --no-ansi
 
