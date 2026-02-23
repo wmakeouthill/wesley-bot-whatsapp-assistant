@@ -22,10 +22,14 @@ RUN apt-get update \
 WORKDIR /app
 
 # Copia dependências primeiro (aproveita cache do Docker)
-COPY pyproject.toml poetry.lock* ./
+# poetry.lock é necessário para instalação reproduzível (inclui asyncpg para PostgreSQL assíncrono)
+COPY pyproject.toml poetry.lock ./
 
-# Instala todas as dependências do projeto
+# Instala todas as dependências do projeto (inclui asyncpg para SQLAlchemy async)
 RUN poetry install --no-root --no-interaction --no-ansi
+
+# Falha no build se asyncpg não estiver instalado (evita erro em runtime)
+RUN python -c "import asyncpg"
 
 # Copia o resto da aplicação
 COPY . .
