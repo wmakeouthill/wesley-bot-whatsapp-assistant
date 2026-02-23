@@ -25,6 +25,11 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
+@app.on_event("startup")
+async def on_startup():
+    from app.infrastructure.database.session import init_db
+    await init_db()
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

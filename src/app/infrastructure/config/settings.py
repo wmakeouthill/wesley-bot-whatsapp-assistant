@@ -17,9 +17,13 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.0-flash"
     
     # Database Settings
-    database_url: str = "sqlite+aiosqlite:///./bot_data.db"
-    # Banco da Evolution API para resolver LID → telefone real
+    # Banco da Evolution API (reaproveitado para o histórico do bot)
     evolution_db_url: str = "postgresql://bot_user:@bot_postgres:5432/evolution_db"
+    
+    @property
+    def async_database_url(self) -> str:
+        """Converte a URL do async SQLAlchemy."""
+        return self.evolution_db_url.replace("postgresql://", "postgresql+asyncpg://")
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

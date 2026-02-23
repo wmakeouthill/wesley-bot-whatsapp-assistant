@@ -234,7 +234,18 @@ class PortfolioRAG:
                 is_project = "projects/" in rel_str
                 is_fallback = md_file.name.upper() in {f.upper() for f in FALLBACK_FILES}
 
+                tags = []
+                frontmatter_match = re.search(r"^---\n(.*?)\n---", content, re.DOTALL)
+                if frontmatter_match:
+                    fm_text = frontmatter_match.group(1)
+                    tags_match = re.search(r"tags:\s*\[(.*?)\]", fm_text)
+                    if tags_match:
+                        tags = [t.strip() for t in tags_match.group(1).split(",")]
+
                 header = f"--- Documento: {rel_str} ---\n"
+                if tags:
+                    header += f"Tags: {', '.join(tags)}\n"
+                    
                 texto_com_header = header + content
 
                 file_chunks = self._chunk_text(texto_com_header, chunk_size=1000, overlap=100)
