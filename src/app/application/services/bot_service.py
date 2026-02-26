@@ -14,7 +14,7 @@ from app.domain.schemas.webhook import WebhookBody
 from app.infrastructure.external.evolution_client import EvolutionClient
 from app.domain.services.rag_service import PortfolioRAG
 from app.infrastructure.database.session import async_session
-from app.domain.entities.models import Cliente, Mensagem, BotConfig
+from app.domain.entities.models import Cliente, Mensagem, BotConfig, AllowBlockEntry
 from app.infrastructure.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -173,14 +173,20 @@ class AtendimentoService:
 
         logger.info(f"[{instancia}][{telefone} / {nome_cliente}]: {texto_recebido}")
 
-        # --- Verifica blocklist/allowlist (apenas instância 1 por padrão) ---
-        if instancia != settings.evolution_instance_two_name:
-            if settings.ia_blocklist_set and telefone_numero in settings.ia_blocklist_set:
-                logger.info(f"Número {telefone_numero} está na blocklist — ignorando.")
-                return
-            if settings.ia_allowlist_set and telefone_numero not in settings.ia_allowlist_set:
-                logger.info(f"Número {telefone_numero} não está na allowlist — ignorando.")
-                return
+        # --- Verifica blocklist/allowlist persistidos em banco, por instância ---
+        if await self._is_blocked(instancia, telefone_numero):
+            logger.info(f"Número %s está na blocklist da instância %s — ignorando.", telefone_numero, instancia)
+            return
+
+        if await self._has_allowlist_entries(instancia) and not await self._is_allowed(
+            instancia, telefone_numero
+        ):
+            logger.info(
+                "Número %s não está na allowlist da instância %s — ignorando.",
+                telefone_numero,
+                instancia,
+            )
+            return
 
         # --- Verifica estado da IA no banco (prioridade: por chat > global) ---
         ia_ativa = await self._ia_ativa_para(instancia, telefone_numero)
@@ -505,6 +511,42 @@ class AtendimentoService:
                 return cfg_global.ia_ativa
 
             return True  # padrão: IA ativa
+
+    # -----------------------------------------------------------------------
+    # Allowlist / Blocklist persistidos em banco (AllowBlockEntry)
+    # -----------------------------------------------------------------------
+
+    async def _is_blocked(self, instancia: str, numero: str) -> bool:
+        """Retorna True se o número estiver na blocklist dessa instância."""
+        async with async_session() as session:
+            stmt = select(AllowBlockEntry).where(
+                AllowBlockEntry.tipo == "block",
+                AllowBlockEntry.numero == numero,
+                AllowBlockEntry.instancia == instancia,
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none() is not None
+
+    async def _has_allowlist_entries(self, instancia: str) -> bool:
+        """Retorna True se existir qualquer allowlist configurada para a instância."""
+        async with async_session() as session:
+            stmt = select(AllowBlockEntry).where(
+                AllowBlockEntry.tipo == "allow",
+                AllowBlockEntry.instancia == instancia,
+            )
+            result = await session.execute(stmt)
+            return result.first() is not None
+
+    async def _is_allowed(self, instancia: str, numero: str) -> bool:
+        """Retorna True se o número estiver na allowlist dessa instância."""
+        async with async_session() as session:
+            stmt = select(AllowBlockEntry).where(
+                AllowBlockEntry.tipo == "allow",
+                AllowBlockEntry.numero == numero,
+                AllowBlockEntry.instancia == instancia,
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none() is not None
 
     # -----------------------------------------------------------------------
     # Geração de respostas — Portfólio

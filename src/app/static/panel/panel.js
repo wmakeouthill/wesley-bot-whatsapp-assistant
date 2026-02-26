@@ -233,17 +233,27 @@ function fecharModalQR() {
 
 /* ------------------- Allowlist / Blocklist ------------------- */
 async function loadAllowlist() {
-  const data = await api('GET', '/api/panel/allowlist');
+  const instancia = getInstancia();
+  if (!instancia) {
+    toast('Selecione uma instância primeiro', 'red');
+    return;
+  }
+  const data = await api('GET', `/api/panel/allowlist?instancia=${encodeURIComponent(instancia)}`);
   if (!data) return;
   document.getElementById('allowlist-input').value = data.allowlist || '';
   document.getElementById('blocklist-input').value = data.blocklist || '';
 }
 
 async function saveAllowlist() {
+  const instancia = getInstancia();
+  if (!instancia) {
+    toast('Selecione uma instância primeiro', 'red');
+    return;
+  }
   const allowlist = document.getElementById('allowlist-input').value.trim();
   const blocklist = document.getElementById('blocklist-input').value.trim();
-  const ok = await api('POST', '/api/panel/allowlist', { allowlist, blocklist });
-  if (ok) toast('✅ Allowlist/blocklist atualizada!');
+  const ok = await api('POST', '/api/panel/allowlist', { instancia, allowlist, blocklist });
+  if (ok) toast('✅ Allowlist/blocklist atualizada para a instância selecionada!');
   else toast('Erro ao salvar', 'red');
 }
 

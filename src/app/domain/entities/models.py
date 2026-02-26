@@ -46,6 +46,28 @@ class BotConfig(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AllowBlockEntry(Base):
+    """Entrada de allowlist/blocklist por número e (opcionalmente) por instância.
+
+    - tipo: 'allow' ou 'block'
+    - numero: telefone sem sufixo JID (ex: 5521999999999)
+    - instancia: opcional, se quiser restringir a uma instância específica
+    """
+
+    __tablename__ = "bot_allow_block"
+
+    id = Column(String(36), primary_key=True)
+    instancia = Column(String(100), nullable=True, index=True)
+    numero = Column(String(50), nullable=False, index=True)
+    tipo = Column(String(10), nullable=False, index=True)  # "allow" ou "block"
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("instancia", "numero", "tipo", name="uq_bot_allow_block_instancia_numero_tipo"),
+    )
+
+
 class AdminUser(Base):
     """Usuário administrador do painel web.
     Senha gerenciada via SSH com o script scripts/set_admin_password.py.

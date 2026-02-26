@@ -37,7 +37,8 @@ def run_migrations_offline() -> None:
 
     """
     from app.infrastructure.config.settings import settings
-    url = settings.database_url.replace("+aiosqlite", "")
+    # Usa a URL síncrona do banco da Evolution (PostgreSQL)
+    url = settings.evolution_db_url
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -58,8 +59,8 @@ def run_migrations_online() -> None:
     """
     from app.infrastructure.config.settings import settings
     from sqlalchemy import create_engine
-    
-    sync_url = settings.database_url.replace("+aiosqlite", "")
+
+    sync_url = settings.evolution_db_url
     connectable = create_engine(sync_url)
 
     with connectable.connect() as connection:

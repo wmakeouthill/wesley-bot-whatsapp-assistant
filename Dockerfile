@@ -40,5 +40,6 @@ COPY . .
 # Expõe a porta do FastAPI
 EXPOSE 8000
 
-# Roda o servidor usando o uvicorn através do poetry
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# EntryPoint que aplica migrations Alembic antes de subir o uvicorn
+RUN chmod +x /app/docker-entrypoint.sh
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

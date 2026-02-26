@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form, Response, R
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc, or_
+from sqlalchemy import select, func, desc, or_, delete
 
 from app.infrastructure.auth.panel_auth import (
     verify_password,
@@ -20,7 +20,7 @@ from app.infrastructure.auth.panel_auth import (
     hash_password,
 )
 from app.infrastructure.database.session import async_session
-from app.domain.entities.models import AdminUser, Cliente, Mensagem, BotConfig
+from app.domain.entities.models import AdminUser, Cliente, Mensagem, BotConfig, AllowBlockEntry
 from app.infrastructure.config.settings import settings
 from app.infrastructure.external.evolution_client import EvolutionClient
 
@@ -51,6 +51,7 @@ class IAToggleRequest(BaseModel):
     ia_ativa: bool
 
 class AllowlistUpdateRequest(BaseModel):
+    instancia: str  # nome da instância (ex: wesley_bot_session)
     allowlist: str  # números separados por vírgula
     blocklist: str  # números separados por vírgula
 
@@ -377,12 +378,23 @@ async def panel_ia_reset(
 # ===========================================================================
 
 @router.get("/api/panel/allowlist", tags=["Painel Admin"])
-async def panel_get_allowlist(current_user: str = Depends(get_current_user)):
-    """Retorna allowlist e blocklist atuais (lidas das settings)."""
+async def panel_get_allowlist(
+    instancia: str,
+    current_user: str = Depends(get_current_user),
+):
+    """Retorna allowlist e blocklist atuais da instância (persistidas em bot_allow_block)."""
+    async with async_session() as session:
+        stmt = select(AllowBlockEntry).where(AllowBlockEntry.instancia == instancia)
+        result = await session.execute(stmt)
+        entries = result.scalars().all()
+
+    allow_numbers = {e.numero for e in entries if e.tipo == "allow"}
+    block_numbers = {e.numero for e in entries if e.tipo == "block"}
+
     return {
-        "allowlist": settings.ia_allowlist,
-        "blocklist": settings.ia_blocklist,
-        "note": "Editar aqui atualiza a config em memória. Para persistir entre restarts, atualize o .env na VPS e reinicie o container.",
+        "allowlist": ",".join(sorted(allow_numbers)),
+        "blocklist": ",".join(sorted(block_numbers)),
+        "note": f"Editar aqui atualiza allowlist/blocklist persistidos na tabela bot_allow_block para a instância '{instancia}'.",
     }
 
 
@@ -392,16 +404,62 @@ async def panel_update_allowlist(
     current_user: str = Depends(get_current_user),
 ):
     """
-    Atualiza allowlist e blocklist em memória (efeito imediato).
-    Para persistir permanentemente, atualize o .env na VPS.
+    Atualiza allowlist e blocklist da instância persistidos em banco (tabela bot_allow_block).
+    Os números são separados por vírgula.
     """
-    settings.ia_allowlist = body.allowlist
-    settings.ia_blocklist = body.blocklist
-    logger.info(f"[PAINEL] Allowlist/blocklist atualizado por {current_user}")
+    def _parse_numbers(raw: str) -> set[str]:
+        return {n.strip() for n in raw.split(",") if n.strip()}
+
+    allow_set = _parse_numbers(body.allowlist)
+    block_set = _parse_numbers(body.blocklist)
+
+    async with async_session() as session:
+        # Remove configurações anteriores dessa instância
+        await session.execute(
+            delete(AllowBlockEntry).where(AllowBlockEntry.instancia == body.instancia)
+        )
+
+        now = datetime.utcnow()
+        novas_entradas: list[AllowBlockEntry] = []
+
+        for numero in allow_set:
+            novas_entradas.append(
+                AllowBlockEntry(
+                    id=str(uuid.uuid4()),
+                    instancia=body.instancia,
+                    numero=numero,
+                    tipo="allow",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+        for numero in block_set:
+            novas_entradas.append(
+                AllowBlockEntry(
+                    id=str(uuid.uuid4()),
+                    instancia=body.instancia,
+                    numero=numero,
+                    tipo="block",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+        if novas_entradas:
+            session.add_all(novas_entradas)
+
+        await session.commit()
+
+    logger.info(
+        "[PAINEL] Allowlist/blocklist atualizado para instância %s por %s",
+        body.instancia,
+        current_user,
+    )
     return {
         "ok": True,
-        "allowlist": settings.ia_allowlist,
-        "blocklist": settings.ia_blocklist,
+        "allowlist": ",".join(sorted(allow_set)),
+        "blocklist": ",".join(sorted(block_set)),
     }
 
 

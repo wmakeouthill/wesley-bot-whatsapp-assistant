@@ -142,7 +142,7 @@
 
                 <div class="allowlist-card">
                     <h3>✅ Allowlist</h3>
-                    <p>Só esses números recebem resposta da IA (deixe vazio para atender todos).</p>
+                    <p>Só esses números recebem resposta da IA na instância selecionada (deixe vazio para atender todos).</p>
                     <label>Números permitidos (separados por vírgula, sem @, ex: 5521999999999)</label>
                     <textarea id="allowlist-input" placeholder="5521999999999, 5511888888888"></textarea>
 
@@ -152,9 +152,8 @@
                     <textarea id="blocklist-input" placeholder="5521000000000"></textarea>
 
                     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                        <button class="btn-save" onclick="saveAllowlist()">💾 Salvar (em memória)</button>
-                        <small style="color:var(--text-muted)">Para persistir entre reinicializações, edite o .env na
-                            VPS.</small>
+                        <button class="btn-save" onclick="saveAllowlist()">💾 Salvar filtros da instância</button>
+                        <small style="color:var(--text-muted)">Os filtros são salvos no banco por instância. Deixe a allowlist vazia para não restringir o atendimento.</small>
                     </div>
                 </div>
             </div>
