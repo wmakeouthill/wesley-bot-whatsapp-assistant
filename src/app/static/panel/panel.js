@@ -18,10 +18,10 @@ function navigateTo(page) {
   if (nav) nav.classList.add('active');
 
   switch (page) {
-    case 'dashboard':    loadDashboard();    break;
-    case 'conversas':    loadConversas(1);   break;
-    case 'instancias':   loadInstancias();   break;
-    case 'allowlist':    loadAllowlist();    break;
+    case 'dashboard': loadDashboard(); break;
+    case 'conversas': loadConversas(1); break;
+    case 'instancias': loadInstancias(); break;
+    case 'allowlist': loadAllowlist(); break;
   }
 }
 
@@ -134,7 +134,7 @@ async function toggleIA(instancia, chatJid, ativo) {
   if (!instancia) { toast('Selecione uma instância primeiro', 'red'); return; }
   const ok = await api('POST', '/api/panel/ia/toggle', { instancia, chat_jid: chatJid, ia_ativa: ativo });
   if (ok) toast(ativo ? '✅ IA ativada' : '🔴 IA desativada');
-  else    toast('Erro ao alterar IA', 'red');
+  else toast('Erro ao alterar IA', 'red');
 }
 
 /* ------------------- Histórico ------------------- */
@@ -156,7 +156,7 @@ async function verHistorico(jidEnc, nome) {
   }
 
   chatMsgs.innerHTML = data.mensagens.map(m => {
-    const dt = m.data_hora ? new Date(m.data_hora + 'Z').toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) : '';
+    const dt = m.data_hora ? new Date(m.data_hora + 'Z').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
     return `
       <div class="chat-msg ${m.direcao === 'RECEBIDA' ? 'recebida' : 'enviada'}">
         <div>${escHtml(m.texto || '')}</div>
@@ -218,7 +218,11 @@ async function conectarInstancia(nome) {
 function abrirModalQR(base64Qr, nome) {
   const overlay = document.getElementById('qr-modal');
   document.getElementById('qr-instance-name').textContent = nome;
-  document.getElementById('qr-img').src = 'data:image/png;base64,' + base64Qr;
+
+  // Limpa o prefixo se já veio da API para não duplicar
+  const cleanBase64 = base64Qr.startsWith('data:image/') ? base64Qr : 'data:image/png;base64,' + base64Qr;
+  document.getElementById('qr-img').src = cleanBase64;
+
   overlay.style.display = 'flex';
 }
 
@@ -240,7 +244,7 @@ async function saveAllowlist() {
   const blocklist = document.getElementById('blocklist-input').value.trim();
   const ok = await api('POST', '/api/panel/allowlist', { allowlist, blocklist });
   if (ok) toast('✅ Allowlist/blocklist atualizada!');
-  else    toast('Erro ao salvar', 'red');
+  else toast('Erro ao salvar', 'red');
 }
 
 /* ------------------- Logout ------------------- */
