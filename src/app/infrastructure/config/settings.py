@@ -16,6 +16,30 @@ class Settings(BaseSettings):
     gemini_api_key: str = "your_google_api_key_here"
     gemini_model: str = "gemini-2.0-flash"
     
+    # Owner / Controle de IA
+    # JID do seu número NESTA instância (ex: "5521983866676@s.whatsapp.net")
+    # Mensagens fromMe enviadas pra este JID são interpretadas como comandos /ia
+    owner_jid: str = ""
+    
+    # Instância 2 — Número Pessoal do Wesley
+    evolution_instance_two_name: str = ""  # Ex: "wesley_bot_pessoal"
+    instance_two_owner_jid: str = ""       # JID do owner nesta instância
+    
+    # Allowlist/Blocklist de números (separados por vírgula, sem @s.whatsapp.net)
+    # Se allowlist não estiver vazia, apenas esses números recebem resposta na instância 1
+    ia_allowlist: str = ""  # Ex: "5521999999999,5511888888888" (vazio = todos)
+    ia_blocklist: str = ""  # Ex: "5521000000000" (números sempre bloqueados)
+    
+    @property
+    def ia_allowlist_set(self) -> set[str]:
+        """Retorna o allowlist como um set de strings para lookup O(1)."""
+        return {n.strip() for n in self.ia_allowlist.split(",") if n.strip()}
+    
+    @property
+    def ia_blocklist_set(self) -> set[str]:
+        """Retorna o blocklist como um set de strings para lookup O(1)."""
+        return {n.strip() for n in self.ia_blocklist.split(",") if n.strip()}
+    
     # Database Settings
     # Banco da Evolution API (reaproveitado para o histórico do bot)
     evolution_db_url: str = "postgresql://bot_user:@bot_postgres:5432/evolution_db"

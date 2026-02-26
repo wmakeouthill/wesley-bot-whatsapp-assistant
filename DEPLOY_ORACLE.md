@@ -65,3 +65,76 @@ curl --request POST \
 ```
 
 🎉 **PRONTO!** TUDO 100% ONLINE E ASSISTENTE INTELIGENTE! O Robô do Wesley receberá a mensagem vinda do Node da Evolution API, passará na rede interna para o Python, o Python rodará o RAG consultando seus Certificados lidos no start pelo LangChain/Faiss e disparará de volta para o Bot Node avisando o app do WhatsApp!
+
+---
+
+## 6. Configurando o Segundo Número (Número Pessoal)
+
+O bot suporta **duas instâncias** da Evolution API. A segunda usa uma personalidade informal, como se fosse o próprio Wesley respondendo.
+
+### 6.1 — Crie a segunda instância
+
+```bash
+curl --request POST \
+  --url http://localhost:8080/instance/create \
+  --header 'apikey: SUA_EVOLUTION_API_KEY' \
+  --header 'content-type: application/json' \
+  --data '{
+    "instanceName": "wesley_bot_pessoal",
+    "qrcode": true,
+    "integration": "WHATSAPP-BAILEYS",
+    "webhook": {
+      "enabled": true,
+      "url": "http://bot_api:8000/webhooks/evolution",
+      "byEvents": false,
+      "base64": false,
+      "events": ["MESSAGES_UPSERT", "CONNECTION_UPDATE"]
+    }
+  }'
+```
+
+### 6.2 — Pegue o QR Code e conecte
+
+```bash
+curl http://localhost:8080/instance/connect/wesley_bot_pessoal \
+  --header 'apikey: SUA_EVOLUTION_API_KEY'
+```
+
+Abra o WhatsApp do número pessoal → Aparelhos conectados → escaneie o QR.
+
+### 6.3 — Adicione ao `.env` da VPS
+
+```bash
+EVOLUTION_INSTANCE_TWO_NAME=wesley_bot_pessoal
+INSTANCE_TWO_OWNER_JID=5521983866676@s.whatsapp.net
+OWNER_JID=5521983866676@s.whatsapp.net
+```
+
+### 6.4 — Reinicie o bot
+
+```bash
+docker compose restart api
+```
+
+---
+
+## 7. Controlando a IA por chat (Comandos /ia)
+
+No WhatsApp do número dono do bot, vá em **"Mensagens Salvas"** e envie:
+
+| Comando | O que faz |
+|---|---|
+| `/ia off` | Desativa IA para todos os chats |
+| `/ia on` | Reativa IA para todos |
+| `/ia off 5511999999999` | Desativa só para esse número |
+| `/ia on 5511999999999` | Ativa só para esse número |
+| `/ia lista` | Lista últimas 10 conversas com status ✅/🔴 |
+| `/ia status` | Mostra status global da instância |
+| `/ia resetar 5511999999999` | Remove override individual |
+
+### Allowlist / Blocklist (`.env`)
+
+```bash
+IA_ALLOWLIST=5521999999999,5511888888888  # Só esses respondem (vazio = todos)
+IA_BLOCKLIST=5521000000000               # Esses nunca respondem
+```

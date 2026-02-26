@@ -9,10 +9,10 @@ logger = logging.getLogger(__name__)
 class EvolutionClient:
     """Cliente HTTP para comunicação com a Evolution API"""
     
-    def __init__(self):
+    def __init__(self, instance_name: Optional[str] = None):
         self.base_url = settings.evolution_api_url
         self.api_key = settings.evolution_api_key
-        self.instance_name = settings.evolution_instance_name
+        self.instance_name = instance_name or settings.evolution_instance_name
         self.webhook_url = settings.webhook_url
         
         self.headers = {

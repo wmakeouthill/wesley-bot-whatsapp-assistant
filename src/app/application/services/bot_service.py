@@ -1,156 +1,30 @@
 import logging
+import uuid
+import base64
+import io
 from typing import Optional
+from datetime import datetime
+
+import openpyxl
+from gtts import gTTS
+from google import genai
+from sqlalchemy import select, or_
+
 from app.domain.schemas.webhook import WebhookBody
 from app.infrastructure.external.evolution_client import EvolutionClient
 from app.domain.services.rag_service import PortfolioRAG
 from app.infrastructure.database.session import async_session
-from app.domain.entities.models import Cliente, Mensagem
-from sqlalchemy import select
-from google import genai
+from app.domain.entities.models import Cliente, Mensagem, BotConfig
 from app.infrastructure.config.settings import settings
-import base64
-import io
-import openpyxl
-from gtts import gTTS
-import uuid
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-class AtendimentoService:
-    """Serviço Orquestrador do fluxo conversacional"""
-    
-    def __init__(self, evolution_client: EvolutionClient):
-        self.evolution_client = evolution_client
-        self.rag = PortfolioRAG()
-        self.rag.initialize_or_build()
-        self.llm_client = genai.Client(api_key=settings.gemini_api_key)
-        
-    async def processar_webhook(self, body: WebhookBody) -> None:
-        """Ponto de entrada do Webhook."""
-        
-        # Ignora status de mensagens como 'lido' ou 'recebido' 
-        # e foca apenas em 'messages.upsert'
-        if body.event != "messages.upsert":
-            return
-            
-        # Ignora mensagens enviadas pelo próprio bot ('fromMe': true)
-        if body.data.key.fromMe:
-            return
-            
-        # Em mensagens com LID (@lid), resolver para número real via banco da Evolution
-        # Em mensagens de grupo (@g.us), ignorar por ora
-        # Em mensagens normais (@s.whatsapp.net), usar só o número
-        remote_jid = body.data.key.remoteJid
-        if '@g.us' in remote_jid:
-            logger.info(f"Mensagem de grupo ignorada: {remote_jid}")
-            return
-        elif '@lid' in remote_jid:
-            # Evolution API v2.3.7+ resolve @lid internamente no envio — passa o JID completo
-            telefone = remote_jid
-        else:
-            # @s.whatsapp.net: extrair só o número
-            telefone = remote_jid.split('@')[0]
-        nome_cliente = body.data.pushName or "Cliente"
-        id_mensagem = body.data.key.id
-        
-        texto_recebido = self._extrair_texto(body)
-        if not texto_recebido:
-            return
-            
-        logger.info(f"[{telefone} / {nome_cliente}]: {texto_recebido}")
-        
-        # Salva a mensagem recebida no SQLite
-        await self._salvar_mensagem(telefone, nome_cliente, texto_recebido, "RECEBIDA", id_mensagem)
-        
-        texto_lower = texto_recebido.lower()
 
-        # ---------------------------------------------------------------
-        # Detecção de FORMATO agêntico
-        # Regras: palavra de formato OBRIGATÓRIA para evitar falsos positivos.
-        # "fala", "fale", "falar" são verbos comuns em PT — NÃO são sinal de áudio
-        # sozinhos. Requer "áudio", "audio", "voz" ou "voice" explícito.
-        # "tabela" sozinha pode ser parte de pergunta normal; exige verbo de ação.
-        # ---------------------------------------------------------------
-        _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
-        _FORMATO_PLANILHA = {"planilha", "excel", "spreadsheet", "xlsx", "xls"}
-        _VERBOS_ACAO = {"manda", "mandar", "envia", "enviar", "me manda", "me envia",
-                        "gera", "gerar", "cria", "criar", "faz", "fazer", "quero",
-                        "preciso", "pode", "consegue", "testa", "teste"}
+# ---------------------------------------------------------------------------
+# Prompts por "personalidade" do bot
+# ---------------------------------------------------------------------------
 
-        _quer_audio = any(k in texto_lower for k in _FORMATO_AUDIO)
-        _quer_planilha = any(k in texto_lower for k in _FORMATO_PLANILHA) or (
-            "tabela" in texto_lower and any(v in texto_lower for v in _VERBOS_ACAO)
-        )
-
-        # ---------------------------------------------------------------
-        # Extrai o tópico real removendo os indicadores de formato da query
-        # antes de ir ao RAG, evitando poluir os embeddings com "áudio", "planilha" etc.
-        # ---------------------------------------------------------------
-        _REMOVER_DA_QUERY = _FORMATO_AUDIO | _FORMATO_PLANILHA | {
-            "me envia", "me manda", "me envie", "me mande",
-            "manda", "envia", "gera", "cria", "faz",
-            "em formato de", "em formato", "como", "no formato",
-            "por favor", "pfv", "pf",
-        }
-        topico_query = texto_lower
-        for rem in _REMOVER_DA_QUERY:
-            topico_query = topico_query.replace(rem, " ")
-        topico_query = " ".join(topico_query.split()).strip() or texto_recebido
-
-        logger.info(f"RAG query topic: '{topico_query}' (audio={_quer_audio}, planilha={_quer_planilha})")
-
-        # 1. Contexto RAG com top_k dinâmico — usa o tópico sem ruído de formato
-        contexto_rag = self.rag.retrieve_smart(topico_query)
-
-        # 2. Injeta markdown completo do projeto se mencionado (on-demand)
-        projeto_md = self.rag.load_project_if_mentioned(topico_query)
-        if projeto_md:
-            contexto = projeto_md + "\n---\n" + contexto_rag
-        else:
-            contexto = contexto_rag
-
-        # 3. Busca o histórico recente da conversa (ultimas 5 mensagens)
-        historico_str = await self._obter_historico(telefone, limite=5)
-
-        # 4. Trunca o contexto se exceder o orçamento de tokens (30.000 tokens ~ 120k chars)
-        contexto = self._aplicar_token_budget(contexto, historico_str, texto_recebido)
-
-        if _quer_planilha:
-            await self._responder_como_planilha(telefone, nome_cliente, texto_recebido, contexto, historico_str)
-            return
-
-        if _quer_audio:
-            await self._responder_como_audio(telefone, nome_cliente, texto_recebido, contexto, historico_str)
-            return
-
-        # Resposta em texto normal — usa texto_recebido original no Gemini (contexto completo)
-        resposta_ia = await self._gerar_resposta_texto(nome_cliente, texto_recebido, contexto, historico_str)
-        try:
-            await self.evolution_client.send_text_message(telefone, resposta_ia)
-            # Salva resposta gerada no histórico
-            await self._salvar_mensagem(telefone, nome_cliente, resposta_ia, "ENVIADA")
-        except Exception as e:
-            logger.error(f"Erro ao enviar resposta para {telefone}: {e}")
-        
-    def _extrair_texto(self, body: WebhookBody) -> Optional[str]:
-        """Tenta achar texto em mensagem simples ou formatada."""
-        msg_obj = body.data.message
-        if not msg_obj:
-            return None
-            
-        if msg_obj.conversation:
-            return msg_obj.conversation
-            
-        if msg_obj.extendedTextMessage and "text" in msg_obj.extendedTextMessage:
-            return msg_obj.extendedTextMessage["text"]
-            
-        return None
-
-    async def _gerar_resposta_texto(self, nome_cliente: str, texto: str, contexto: str, historico: str = "") -> str:
-        """Gera resposta em texto via Gemini com contexto RAG."""
-        historico_prompt = f"HISTÓRICO RECENTE DA CONVERSA:\n{historico}\nUse o histórico para manter a fluidez da conversa, mas FOQUE a sua resposta principalmente na última mensagem abaixo.\n\n" if historico else ""
-        prompt = f"""
+PROMPT_PORTFOLIO = """
 Você é o Assistente Virtual Oficial do Wesley no WhatsApp.
 Seja amigável, direto, e natural em suas respostas. O usuário se chama {nome_cliente}.
 
@@ -163,20 +37,8 @@ CONTEXTO DEDUZIDO DO PORTFÓLIO:
 
 {historico_prompt}ÚLTIMA MENSAGEM DO USUÁRIO: "{texto}"
 """
-        try:
-            response = self.llm_client.models.generate_content(
-                model=settings.gemini_model,
-                contents=prompt,
-            )
-            return response.text
-        except Exception as e:
-            logger.error(f"Erro chamando IA: {e}")
-            return "Ops, dei uma travadinha processando seu portfólio. Manda de novo?"
 
-    async def _gerar_resposta_audio(self, nome_cliente: str, texto: str, contexto: str, historico: str = "") -> str:
-        """Gera resposta em texto otimizada para fala (TTS) via Gemini com contexto RAG."""
-        historico_prompt = f"HISTÓRICO RECENTE DA CONVERSA:\n{historico}\nUse o histórico para manter a fluidez da conversa, mas FOQUE a sua resposta principalmente na última mensagem abaixo.\n\n" if historico else ""
-        prompt = f"""
+PROMPT_PORTFOLIO_AUDIO = """
 Você é o Assistente Virtual Oficial do Wesley no WhatsApp.
 O usuário se chama {nome_cliente}.
 Sua resposta será convertida em voz (TTS), portanto:
@@ -193,38 +55,527 @@ CONTEXTO DEDUZIDO DO PORTFÓLIO:
 
 {historico_prompt}ÚLTIMA MENSAGEM DO USUÁRIO: "{texto}"
 """
+
+PROMPT_PESSOAL = """
+Você é o Wesley, respondendo pelo WhatsApp pessoal — NÃO é um assistente virtual.
+Você É o Wesley. Responda na primeira pessoa, como se fosse ele mesmo digitando.
+
+Regras de personalidade:
+- Seja muito informal, use linguagem coloquial brasileira
+- Use "kkk", "rsrs", "haha", abreviações e gírias naturalmente quando fizer sentido
+- Seja direto e objetivo, como num chat de WhatsApp real
+- Não use markdown (sem **, sem #, sem listas com -)
+- Se não souber algo, responda naturalmente que não sabe, como qualquer pessoa faria
+- NÃO mencione que é um assistente ou bot NUNCA. Se perguntarem, desvie com bom humor
+- Adapte o tom ao contexto da conversa: se a pessoa estiver brincando, brinque também
+
+HISTÓRICO RECENTE DA CONVERSA (para você pegar o estilo e contexto):
+{historico}
+
+MENSAGEM RECEBIDA DE {nome_cliente}: "{texto}"
+
+Responda como o Wesley responderia, de forma curta e natural como num WhatsApp.
+"""
+
+PROMPT_PESSOAL_AUDIO = """
+Você é o Wesley, respondendo por WhatsApp pessoal via áudio.
+Responda na primeira pessoa, como se fosse o Wesley falando num áudio de WhatsApp.
+- Seja muito informal, natural, como numa conversa de voz do dia a dia
+- NÃO use markdown
+- Escreva como se estivesse falando: "né", "tá", "tô", etc.
+- Seja curto e direto, áudio de WhatsApp não é discurso
+
+HISTÓRICO RECENTE:
+{historico}
+
+MENSAGEM DE {nome_cliente}: "{texto}"
+"""
+
+# ---------------------------------------------------------------------------
+# Comandos /ia disponíveis (ajuda inline)
+# ---------------------------------------------------------------------------
+AJUDA_COMANDOS = """🤖 *Comandos disponíveis:*
+
+`/ia on` — ativa a IA para todos
+`/ia off` — desativa a IA para todos
+`/ia on 5521999999999` — ativa para número específico
+`/ia off 5521999999999` — desativa para número específico
+`/ia lista` — lista últimas 10 conversas com status
+`/ia resetar 5521999999999` — remove override individual (volta ao padrão global)
+`/ia status` — mostra se a IA está ativa globalmente nesta instância
+"""
+
+
+class AtendimentoService:
+    """Serviço Orquestrador do fluxo conversacional"""
+
+    def __init__(self, evolution_client: EvolutionClient):
+        self.evolution_client = evolution_client
+        self.rag = PortfolioRAG()
+        self.rag.initialize_or_build()
+        self.llm_client = genai.Client(api_key=settings.gemini_api_key)
+
+    # -----------------------------------------------------------------------
+    # Ponto de entrada do Webhook
+    # -----------------------------------------------------------------------
+
+    async def processar_webhook(self, body: WebhookBody, client: Optional[EvolutionClient] = None) -> None:
+        """Ponto de entrada do Webhook. `client` permite override do EvolutionClient por instância."""
+        ev_client = client or self.evolution_client
+        instancia = body.instance
+
+        if body.event != "messages.upsert":
+            return
+
+        remote_jid = body.data.key.remoteJid
+
+        # --- Determina o owner_jid desta instância ---
+        if instancia == settings.evolution_instance_two_name:
+            owner_jid = settings.instance_two_owner_jid
+        else:
+            owner_jid = settings.owner_jid
+
+        # --- Mensagens fromMe: só processar se for comando do owner ---
+        if body.data.key.fromMe:
+            # Verifica se a mensagem foi enviada para o próprio número (Mensagens Salvas)
+            # ou se o owner está mandando mensagem - este é o canal de comandos /ia
+            texto_cmd = self._extrair_texto(body)
+            if texto_cmd and texto_cmd.strip().startswith("/ia"):
+                await self._processar_comando_ia(texto_cmd.strip(), instancia, owner_jid, ev_client)
+            return
+
+        # --- Ignora grupos ---
+        if "@g.us" in remote_jid:
+            logger.info(f"Mensagem de grupo ignorada: {remote_jid}")
+            return
+
+        # --- Normaliza o telefone ---
+        if "@lid" in remote_jid:
+            telefone = remote_jid
+            telefone_numero = remote_jid.split("@")[0]
+        else:
+            telefone = remote_jid.split("@")[0]
+            telefone_numero = telefone
+
+        nome_cliente = body.data.pushName or "Cliente"
+        id_mensagem = body.data.key.id
+
+        texto_recebido = self._extrair_texto(body)
+        if not texto_recebido:
+            return
+
+        logger.info(f"[{instancia}][{telefone} / {nome_cliente}]: {texto_recebido}")
+
+        # --- Verifica blocklist/allowlist (apenas instância 1 por padrão) ---
+        if instancia != settings.evolution_instance_two_name:
+            if settings.ia_blocklist_set and telefone_numero in settings.ia_blocklist_set:
+                logger.info(f"Número {telefone_numero} está na blocklist — ignorando.")
+                return
+            if settings.ia_allowlist_set and telefone_numero not in settings.ia_allowlist_set:
+                logger.info(f"Número {telefone_numero} não está na allowlist — ignorando.")
+                return
+
+        # --- Verifica estado da IA no banco (prioridade: por chat > global) ---
+        ia_ativa = await self._ia_ativa_para(instancia, telefone_numero)
+        if not ia_ativa:
+            logger.info(f"IA desativada para [{instancia}][{telefone_numero}] — ignorando.")
+            return
+
+        # --- Salva mensagem recebida ---
+        await self._salvar_mensagem(telefone, nome_cliente, texto_recebido, "RECEBIDA", id_mensagem)
+
+        # --- Roteamento por instância: pessoal vs portfólio ---
+        if instancia == settings.evolution_instance_two_name:
+            await self._responder_instancia_pessoal(ev_client, telefone, nome_cliente, texto_recebido)
+        else:
+            await self._responder_instancia_portfolio(ev_client, telefone, nome_cliente, texto_recebido)
+
+    # -----------------------------------------------------------------------
+    # Fluxo da instância PORTFÓLIO (instância 1 — comportamento original)
+    # -----------------------------------------------------------------------
+
+    async def _responder_instancia_portfolio(
+        self, ev_client: EvolutionClient, telefone: str, nome: str, texto: str
+    ):
+        telefone_numero = telefone.split("@")[0] if "@" in telefone else telefone
+        texto_lower = texto.lower()
+
+        _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
+        _FORMATO_PLANILHA = {"planilha", "excel", "spreadsheet", "xlsx", "xls"}
+        _VERBOS_ACAO = {
+            "manda", "mandar", "envia", "enviar", "me manda", "me envia",
+            "gera", "gerar", "cria", "criar", "faz", "fazer", "quero",
+            "preciso", "pode", "consegue", "testa", "teste",
+        }
+
+        _quer_audio = any(k in texto_lower for k in _FORMATO_AUDIO)
+        _quer_planilha = any(k in texto_lower for k in _FORMATO_PLANILHA) or (
+            "tabela" in texto_lower and any(v in texto_lower for v in _VERBOS_ACAO)
+        )
+
+        _REMOVER_DA_QUERY = _FORMATO_AUDIO | _FORMATO_PLANILHA | {
+            "me envia", "me manda", "me envie", "me mande",
+            "manda", "envia", "gera", "cria", "faz",
+            "em formato de", "em formato", "como", "no formato",
+            "por favor", "pfv", "pf",
+        }
+        topico_query = texto_lower
+        for rem in _REMOVER_DA_QUERY:
+            topico_query = topico_query.replace(rem, " ")
+        topico_query = " ".join(topico_query.split()).strip() or texto
+
+        logger.info(f"RAG query topic: '{topico_query}' (audio={_quer_audio}, planilha={_quer_planilha})")
+
+        contexto_rag = self.rag.retrieve_smart(topico_query)
+        projeto_md = self.rag.load_project_if_mentioned(topico_query)
+        contexto = (projeto_md + "\n---\n" + contexto_rag) if projeto_md else contexto_rag
+
+        historico_str = await self._obter_historico(telefone, limite=5)
+        contexto = self._aplicar_token_budget(contexto, historico_str, texto)
+
+        if _quer_planilha:
+            await self._responder_como_planilha(ev_client, telefone, nome, texto, contexto, historico_str)
+            return
+        if _quer_audio:
+            await self._responder_como_audio_portfolio(ev_client, telefone, nome, texto, contexto, historico_str)
+            return
+
+        resposta_ia = await self._gerar_resposta_portfolio(nome, texto, contexto, historico_str)
+        try:
+            await ev_client.send_text_message(telefone, resposta_ia)
+            await self._salvar_mensagem(telefone, nome, resposta_ia, "ENVIADA")
+        except Exception as e:
+            logger.error(f"Erro ao enviar resposta para {telefone}: {e}")
+
+    # -----------------------------------------------------------------------
+    # Fluxo da instância PESSOAL (instância 2 — Wesley informal)
+    # -----------------------------------------------------------------------
+
+    async def _responder_instancia_pessoal(
+        self, ev_client: EvolutionClient, telefone: str, nome: str, texto: str
+    ):
+        """Responde como o próprio Wesley, de forma informal, usando o histórico da conversa."""
+        texto_lower = texto.lower()
+        _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
+        _quer_audio = any(k in texto_lower for k in _FORMATO_AUDIO)
+
+        historico_str = await self._obter_historico(telefone, limite=8)  # mais histórico para pegar o estilo
+
+        if _quer_audio:
+            resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, para_audio=True)
+            try:
+                tts = gTTS(text=resposta, lang="pt", slow=False)
+                audio_io = io.BytesIO()
+                tts.write_to_fp(audio_io)
+                audio_io.seek(0)
+                b64 = base64.b64encode(audio_io.read()).decode("utf-8")
+                await ev_client.send_base64_audio(telefone, b64)
+                await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
+            except Exception as e:
+                logger.error(f"Erro enviando áudio pessoal para {telefone}: {e}")
+                # Fallback texto
+                await ev_client.send_text_message(telefone, resposta)
+                await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
+        else:
+            resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, para_audio=False)
+            try:
+                await ev_client.send_text_message(telefone, resposta)
+                await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
+            except Exception as e:
+                logger.error(f"Erro ao enviar resposta pessoal para {telefone}: {e}")
+
+    async def _gerar_resposta_pessoal(
+        self, nome: str, texto: str, historico: str, para_audio: bool = False
+    ) -> str:
+        """Gera resposta no estilo do Wesley pessoal (informal)."""
+        template = PROMPT_PESSOAL_AUDIO if para_audio else PROMPT_PESSOAL
+        prompt = template.format(nome_cliente=nome, texto=texto, historico=historico)
         try:
             response = self.llm_client.models.generate_content(
                 model=settings.gemini_model,
                 contents=prompt,
             )
-            # Remove qualquer markdown residual
-            clean_text = response.text.replace("**", "").replace("*", "").replace("#", "").replace("- ", "")
-            return clean_text
+            texto_resp = response.text
+            if para_audio:
+                texto_resp = texto_resp.replace("**", "").replace("*", "").replace("#", "").replace("- ", "")
+            return texto_resp
+        except Exception as e:
+            logger.error(f"Erro chamando IA (pessoal): {e}")
+            return "ei, tô com uns problemas técnicos aqui, tenta de novo depois kkk"
+
+    # -----------------------------------------------------------------------
+    # Controle de IA via comandos /ia
+    # -----------------------------------------------------------------------
+
+    async def _processar_comando_ia(
+        self,
+        texto: str,
+        instancia: str,
+        owner_jid: str,
+        ev_client: EvolutionClient,
+    ) -> None:
+        """Interpreta e executa um comando /ia enviado pelo owner."""
+        partes = texto.strip().split()
+        # partes[0] = "/ia", partes[1] = subcomando, partes[2] = número (opcional)
+
+        if len(partes) < 2:
+            await self._enviar_para_owner(ev_client, owner_jid, AJUDA_COMANDOS)
+            return
+
+        subcmd = partes[1].lower()          # on | off | lista | status | resetar
+        numero_alvo = partes[2] if len(partes) >= 3 else None  # número opcional
+
+        if subcmd in ("on", "off"):
+            ativo = subcmd == "on"
+            if numero_alvo:
+                await self._set_config_ia(instancia, numero_alvo, ativo)
+                emoji = "✅" if ativo else "🔴"
+                msg = f"{emoji} IA {'ativada' if ativo else 'desativada'} para *{numero_alvo}*"
+            else:
+                # Config global (chat_jid = None)
+                await self._set_config_ia(instancia, None, ativo)
+                emoji = "✅" if ativo else "🔴"
+                msg = f"{emoji} IA {'ativada' if ativo else 'desativada'} globalmente em *{instancia}*"
+            logger.info(f"[COMANDO /ia] {msg}")
+            await self._enviar_para_owner(ev_client, owner_jid, msg)
+
+        elif subcmd == "resetar" and numero_alvo:
+            await self._remover_config_chat(instancia, numero_alvo)
+            msg = f"🔄 Override removido para *{numero_alvo}* — voltou ao padrão global de *{instancia}*"
+            logger.info(f"[COMANDO /ia] {msg}")
+            await self._enviar_para_owner(ev_client, owner_jid, msg)
+
+        elif subcmd == "lista":
+            resposta = await self._listar_conversas(instancia)
+            await self._enviar_para_owner(ev_client, owner_jid, resposta)
+
+        elif subcmd == "status":
+            status_global = await self._ia_ativa_para(instancia, None)
+            emoji = "✅" if status_global else "🔴"
+            msg = f"{emoji} IA está *{'ATIVA' if status_global else 'DESATIVADA'}* globalmente em *{instancia}*"
+            await self._enviar_para_owner(ev_client, owner_jid, msg)
+
+        else:
+            await self._enviar_para_owner(ev_client, owner_jid, AJUDA_COMANDOS)
+
+    async def _enviar_para_owner(self, ev_client: EvolutionClient, owner_jid: str, msg: str) -> None:
+        """Envia mensagem para o owner (número do dono do bot)."""
+        if not owner_jid:
+            logger.warning("owner_jid não configurado — não é possível enviar feedback de comando.")
+            return
+        # owner_jid pode já ter @s.whatsapp.net ou ser só o número
+        destino = owner_jid if "@" in owner_jid else f"{owner_jid}@s.whatsapp.net"
+        try:
+            await ev_client.send_text_message(destino, msg)
+        except Exception as e:
+            logger.error(f"Erro ao enviar feedback de comando para owner {destino}: {e}")
+
+    async def _listar_conversas(self, instancia: str) -> str:
+        """Lista as 10 conversas mais recentes com status de IA."""
+        async with async_session() as session:
+            # Busca os 10 clientes com mensagem mais recente
+            stmt = (
+                select(Cliente, Mensagem)
+                .join(Mensagem, Mensagem.id_cliente == Cliente.id)
+                .order_by(Mensagem.data_hora.desc())
+                .limit(20)
+            )
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            # Deduplicar por cliente, mantendo o mais recente
+            vistos: dict[str, tuple] = {}
+            for cliente, mensagem in rows:
+                if cliente.whatsapp_id not in vistos:
+                    vistos[cliente.whatsapp_id] = (cliente, mensagem)
+                if len(vistos) >= 10:
+                    break
+
+            if not vistos:
+                return "📭 Nenhuma conversa registrada ainda."
+
+            # Busca os configs de IA para esses JIDs
+            jids = list(vistos.keys())
+            stmt_cfg = select(BotConfig).where(
+                BotConfig.instancia == instancia,
+                or_(BotConfig.chat_jid.in_(jids), BotConfig.chat_jid.is_(None)),
+            )
+            result_cfg = await session.execute(stmt_cfg)
+            configs = result_cfg.scalars().all()
+
+            cfg_por_chat: dict[str | None, bool] = {}
+            for c in configs:
+                cfg_por_chat[c.chat_jid] = c.ia_ativa
+
+            global_ativo = cfg_por_chat.get(None, True)  # padrão: ativo
+
+            linhas = [f"📋 *Últimas conversas em {instancia}:*\n"]
+            for jid, (cliente, mensagem) in vistos.items():
+                # Prioridade: config individual > global
+                telefone_numero = jid.split("@")[0] if "@" in jid else jid
+                ativo = cfg_por_chat.get(telefone_numero, global_ativo)
+                emoji = "✅" if ativo else "🔴"
+                nome = cliente.nome or "Desconhecido"
+                ultima = mensagem.data_hora.strftime("%d/%m %H:%M") if mensagem.data_hora else "—"
+                linhas.append(f"{emoji} *{nome}* | `{telefone_numero}` | {ultima}")
+
+            return "\n".join(linhas)
+
+    # -----------------------------------------------------------------------
+    # Persistência BotConfig
+    # -----------------------------------------------------------------------
+
+    async def _set_config_ia(self, instancia: str, chat_jid: Optional[str], ativo: bool) -> None:
+        """Upsert: cria ou atualiza a config de IA para a instância/chat."""
+        async with async_session() as session:
+            stmt = select(BotConfig).where(
+                BotConfig.instancia == instancia,
+                BotConfig.chat_jid == chat_jid if chat_jid else BotConfig.chat_jid.is_(None),
+            )
+            result = await session.execute(stmt)
+            config = result.scalar_one_or_none()
+
+            if config:
+                config.ia_ativa = ativo
+                config.updated_at = datetime.utcnow()
+            else:
+                config = BotConfig(
+                    id=str(uuid.uuid4()),
+                    instancia=instancia,
+                    chat_jid=chat_jid,
+                    ia_ativa=ativo,
+                    updated_at=datetime.utcnow(),
+                )
+                session.add(config)
+
+            await session.commit()
+
+    async def _remover_config_chat(self, instancia: str, chat_jid: str) -> None:
+        """Remove o override individual de um chat específico."""
+        async with async_session() as session:
+            stmt = select(BotConfig).where(
+                BotConfig.instancia == instancia,
+                BotConfig.chat_jid == chat_jid,
+            )
+            result = await session.execute(stmt)
+            config = result.scalar_one_or_none()
+            if config:
+                await session.delete(config)
+                await session.commit()
+
+    async def _ia_ativa_para(self, instancia: str, chat_jid: Optional[str]) -> bool:
+        """Consulta o BD para saber se a IA está ativa para este chat.
+        
+        Prioridade: config individual > config global > padrão True.
+        """
+        async with async_session() as session:
+            # Busca config individual do chat (se chat_jid fornecido)
+            if chat_jid:
+                stmt_chat = select(BotConfig).where(
+                    BotConfig.instancia == instancia,
+                    BotConfig.chat_jid == chat_jid,
+                )
+                result = await session.execute(stmt_chat)
+                cfg_chat = result.scalar_one_or_none()
+                if cfg_chat is not None:
+                    return cfg_chat.ia_ativa
+
+            # Fallback: config global da instância
+            stmt_global = select(BotConfig).where(
+                BotConfig.instancia == instancia,
+                BotConfig.chat_jid.is_(None),
+            )
+            result = await session.execute(stmt_global)
+            cfg_global = result.scalar_one_or_none()
+            if cfg_global is not None:
+                return cfg_global.ia_ativa
+
+            return True  # padrão: IA ativa
+
+    # -----------------------------------------------------------------------
+    # Geração de respostas — Portfólio
+    # -----------------------------------------------------------------------
+
+    async def _gerar_resposta_portfolio(
+        self, nome: str, texto: str, contexto: str, historico: str = ""
+    ) -> str:
+        historico_prompt = (
+            f"HISTÓRICO RECENTE DA CONVERSA:\n{historico}\n"
+            "Use o histórico para manter a fluidez da conversa, mas FOQUE a sua resposta "
+            "principalmente na última mensagem abaixo.\n\n"
+        ) if historico else ""
+        prompt = PROMPT_PORTFOLIO.format(
+            nome_cliente=nome,
+            contexto=contexto,
+            historico_prompt=historico_prompt,
+            texto=texto,
+        )
+        try:
+            response = self.llm_client.models.generate_content(
+                model=settings.gemini_model, contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            logger.error(f"Erro chamando IA: {e}")
+            return "Ops, dei uma travadinha processando seu portfólio. Manda de novo?"
+
+    async def _gerar_resposta_portfolio_audio(
+        self, nome: str, texto: str, contexto: str, historico: str = ""
+    ) -> str:
+        historico_prompt = (
+            f"HISTÓRICO RECENTE DA CONVERSA:\n{historico}\n"
+            "Use o histórico para manter a fluidez da conversa, mas FOQUE a sua resposta "
+            "principalmente na última mensagem abaixo.\n\n"
+        ) if historico else ""
+        prompt = PROMPT_PORTFOLIO_AUDIO.format(
+            nome_cliente=nome,
+            contexto=contexto,
+            historico_prompt=historico_prompt,
+            texto=texto,
+        )
+        try:
+            response = self.llm_client.models.generate_content(
+                model=settings.gemini_model, contents=prompt
+            )
+            clean = response.text.replace("**", "").replace("*", "").replace("#", "").replace("- ", "")
+            return clean
         except Exception as e:
             logger.error(f"Erro chamando IA: {e}")
             return "Putz, deu uma travadinha aqui na hora de carregar meu cérebro. Tenta me pedir de novo?"
 
-    async def _responder_como_audio(self, telefone: str, nome: str, texto: str, contexto: str, historico: str = ""):
-        """Gera resposta via RAG+Gemini e envia como áudio de voz (TTS)."""
-        resposta_texto = await self._gerar_resposta_audio(nome, texto, contexto, historico)
+    async def _responder_como_audio_portfolio(
+        self,
+        ev_client: EvolutionClient,
+        telefone: str,
+        nome: str,
+        texto: str,
+        contexto: str,
+        historico: str = "",
+    ):
+        resposta_texto = await self._gerar_resposta_portfolio_audio(nome, texto, contexto, historico)
         logger.info(f"Gerando áudio TTS para {telefone}: {resposta_texto[:60]}...")
         try:
-            tts = gTTS(text=resposta_texto, lang='pt', slow=False)
+            tts = gTTS(text=resposta_texto, lang="pt", slow=False)
             audio_io = io.BytesIO()
             tts.write_to_fp(audio_io)
             audio_io.seek(0)
-            b64 = base64.b64encode(audio_io.read()).decode('utf-8')
-            await self.evolution_client.send_base64_audio(telefone, b64)
+            b64 = base64.b64encode(audio_io.read()).decode("utf-8")
+            await ev_client.send_base64_audio(telefone, b64)
             await self._salvar_mensagem(telefone, nome, resposta_texto, "ENVIADA")
         except Exception as e:
             logger.error(f"Erro enviando áudio para {telefone}: {e}")
-            # Fallback: envia como texto
-            await self.evolution_client.send_text_message(telefone, resposta_texto)
+            await ev_client.send_text_message(telefone, resposta_texto)
             await self._salvar_mensagem(telefone, nome, resposta_texto, "ENVIADA")
 
-    async def _responder_como_planilha(self, telefone: str, nome: str, texto: str, contexto: str, historico: str = ""):
-        """Gera planilha real via Gemini a partir do contexto RAG e envia como Excel."""
+    async def _responder_como_planilha(
+        self,
+        ev_client: EvolutionClient,
+        telefone: str,
+        nome: str,
+        texto: str,
+        contexto: str,
+        historico: str = "",
+    ):
         prompt_planilha = f"""
 Você é o Assistente do Wesley. O usuário pediu: "{texto}"
 
@@ -232,143 +583,144 @@ Com base neste contexto do portfólio do Wesley:
 {contexto}
 
 Extraia as informações pedidas e retorne SOMENTE as linhas correspondentes ao pedido do usuário (ignore informações secundárias de RAG), sem texto extra.
-Formato obrigatório: cada linha separada por \n, colunas separadas por | (pipe).
+Formato obrigatório: cada linha separada por \\n, colunas separadas por | (pipe).
 A primeira linha é o cabeçalho. Exemplo:
 Tecnologia | Nível | Categoria
 Python | Avançado | Backend
 """
         try:
+            from openpyxl.styles import Font, PatternFill, Border, Side
             response = self.llm_client.models.generate_content(
                 model=settings.gemini_model, contents=prompt_planilha
             )
-            linhas_raw = response.text.strip().split('\n')
-
-            from openpyxl.styles import Font, PatternFill, Border, Side
+            linhas_raw = response.text.strip().split("\n")
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Portfolio Wesley"
-            
+
             header_font = Font(bold=True, color="FFFFFF")
             header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            thin = Border(
+                left=Side(style="thin"), right=Side(style="thin"),
+                top=Side(style="thin"), bottom=Side(style="thin"),
+            )
 
             row_idx = 1
             for linha in linhas_raw:
-                if '|' in linha:
-                    colunas = [c.strip() for c in linha.split('|')]
+                if "|" in linha:
+                    colunas = [c.strip() for c in linha.split("|")]
                     ws.append(colunas)
-                    
                     for col_idx in range(1, len(colunas) + 1):
                         cell = ws.cell(row=row_idx, column=col_idx)
-                        cell.border = thin_border
+                        cell.border = thin
                         if row_idx == 1:
                             cell.font = header_font
                             cell.fill = header_fill
                     row_idx += 1
 
             for col in ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if cell.value and len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                ws.column_dimensions[column].width = max_length + 2
+                max_len = max((len(str(c.value)) for c in col if c.value), default=0)
+                ws.column_dimensions[col[0].column_letter].width = max_len + 2
 
             excel_io = io.BytesIO()
             wb.save(excel_io)
             excel_io.seek(0)
-            b64 = base64.b64encode(excel_io.read()).decode('utf-8')
+            b64 = base64.b64encode(excel_io.read()).decode("utf-8")
             caption = f"Planilha gerada para {nome} com base no portfólio do Wesley!"
-            await self.evolution_client.send_base64_document(telefone, b64, "Wesley_Portfolio.xlsx", caption)
+            await ev_client.send_base64_document(telefone, b64, "Wesley_Portfolio.xlsx", caption)
             await self._salvar_mensagem(telefone, nome, "[Planilha Excel gerada e enviada]", "ENVIADA")
         except Exception as e:
             logger.error(f"Erro enviando planilha para {telefone}: {e}")
-            # Fallback: envia como texto
-            resposta = await self._gerar_resposta_texto(nome, texto, contexto, historico)
-            await self.evolution_client.send_text_message(telefone, resposta)
+            resposta = await self._gerar_resposta_portfolio(nome, texto, contexto, historico)
+            await ev_client.send_text_message(telefone, resposta)
             await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
 
-    async def _enviar_audio_teste(self, telefone: str, nome: str):
-        """Compat: delega para _responder_como_audio com mensagem genérica."""
-        await self._responder_como_audio(telefone, nome, "Fale sobre o Wesley e suas habilidades", "")
+    # -----------------------------------------------------------------------
+    # Utilidades
+    # -----------------------------------------------------------------------
 
-    async def _enviar_planilha_teste(self, telefone: str, nome: str):
-        """Compat: delega para _responder_como_planilha com pedido genérico."""
-        contexto = self.rag.retrieve_smart("stacks tecnologias habilidades Wesley")
-        await self._responder_como_planilha(telefone, nome, "Liste as principais tecnologias e stacks do Wesley", contexto)
-        
-    def _aplicar_token_budget(self, contexto: str, historico: str, texto: str, max_tokens: int = 30000) -> str:
-        """Limita o tamanho do RAG para caber no orçamento de tokens."""
+    def _extrair_texto(self, body: WebhookBody) -> Optional[str]:
+        msg_obj = body.data.message
+        if not msg_obj:
+            return None
+        if msg_obj.conversation:
+            return msg_obj.conversation
+        if msg_obj.extendedTextMessage and "text" in msg_obj.extendedTextMessage:
+            return msg_obj.extendedTextMessage["text"]
+        return None
+
+    def _aplicar_token_budget(
+        self, contexto: str, historico: str, texto: str, max_tokens: int = 30000
+    ) -> str:
         max_chars = max_tokens * 4
-        base_chars = len(historico) + len(texto) + 1000 # 1000 pras instruções do prompt
-        
+        base_chars = len(historico) + len(texto) + 1000
         if base_chars + len(contexto) <= max_chars:
             return contexto
-            
         chars_disponiveis = max_chars - base_chars
         if chars_disponiveis <= 0:
             return ""
-            
-        logger.warning(f"Token Budget: cortando RAG de {len(contexto)} para {chars_disponiveis} caracteres.")
+        logger.warning(f"Token Budget: cortando RAG de {len(contexto)} para {chars_disponiveis} chars.")
         return contexto[:chars_disponiveis]
-        
-    async def _salvar_mensagem(self, whatsapp_id: str, nome: str, texto: str, direcao: str, msg_id: Optional[str] = None):
-        """Salva a mensagem no banco de dados, criando cliente se não existir."""
+
+    async def _salvar_mensagem(
+        self,
+        whatsapp_id: str,
+        nome: str,
+        texto: str,
+        direcao: str,
+        msg_id: Optional[str] = None,
+    ):
         if not texto:
             return
-            
         async with async_session() as session:
-            # Busca ou cria cliente
             stmt = select(Cliente).where(Cliente.whatsapp_id == whatsapp_id)
             result = await session.execute(stmt)
             cliente = result.scalar_one_or_none()
-            
+
             if not cliente:
                 cliente = Cliente(id=str(uuid.uuid4()), whatsapp_id=whatsapp_id, nome=nome)
                 session.add(cliente)
                 await session.flush()
-                
-            # Cria mensagem
-            # se tiver msg_id, verifica se ja existe para não duplicar
+
             if msg_id:
                 stmt_msg = select(Mensagem).where(Mensagem.mensagem_id_whatsapp == msg_id)
                 result_msg = await session.execute(stmt_msg)
                 if result_msg.scalar_one_or_none():
-                    return # ja processada
-                    
+                    return
+
             nova_msg = Mensagem(
                 id=str(uuid.uuid4()),
                 id_cliente=cliente.id,
                 texto=texto,
                 mensagem_id_whatsapp=msg_id or str(uuid.uuid4()),
                 direcao=direcao,
-                data_hora=datetime.utcnow()
+                data_hora=datetime.utcnow(),
             )
             session.add(nova_msg)
             await session.commit()
 
     async def _obter_historico(self, whatsapp_id: str, limite: int = 5) -> str:
-        """Obtém as últimas mensagens do cliente formatadas como string de histórico."""
         async with async_session() as session:
             stmt = select(Cliente).where(Cliente.whatsapp_id == whatsapp_id)
             result = await session.execute(stmt)
             cliente = result.scalar_one_or_none()
             if not cliente:
                 return ""
-                
-            stmt_msg = select(Mensagem).where(Mensagem.id_cliente == cliente.id).order_by(Mensagem.data_hora.desc()).limit(limite)
+
+            stmt_msg = (
+                select(Mensagem)
+                .where(Mensagem.id_cliente == cliente.id)
+                .order_by(Mensagem.data_hora.desc())
+                .limit(limite)
+            )
             result_msg = await session.execute(stmt_msg)
             mensagens = result_msg.scalars().all()
-            
+
             if not mensagens:
                 return ""
-                
+
             historico = []
             for m in reversed(mensagens):
                 remetente = "Usuário" if m.direcao == "RECEBIDA" else "Assistente"
                 historico.append(f"{remetente}: {m.texto}")
-                
             return "\n".join(historico)
