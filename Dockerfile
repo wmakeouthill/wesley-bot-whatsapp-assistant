@@ -41,5 +41,5 @@ COPY . .
 EXPOSE 8000
 
 # EntryPoint que aplica migrations Alembic antes de subir o uvicorn
-RUN chmod +x /app/docker-entrypoint.sh
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+# Usa /bin/sh para não depender da permissão de execução do script (evita "permission denied" no Linux)
+ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
