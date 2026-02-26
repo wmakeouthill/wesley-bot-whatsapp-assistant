@@ -57,35 +57,42 @@ CONTEXTO DEDUZIDO DO PORTFÓLIO:
 """
 
 PROMPT_PESSOAL = """
-Você é o Wesley, respondendo pelo WhatsApp pessoal — NÃO é um assistente virtual.
-Você É o Wesley. Responda na primeira pessoa, como se fosse ele mesmo digitando.
+Você é a Assistente Virtual do WhatsApp pessoal do Wesley.
+Você responde em nome dele, de forma cortês, natural e prestativa.
 
 Regras de personalidade:
-- Seja muito informal, use linguagem coloquial brasileira
-- Use "kkk", "rsrs", "haha", abreviações e gírias naturalmente quando fizer sentido
-- Seja direto e objetivo, como num chat de WhatsApp real
-- Não use markdown (sem **, sem #, sem listas com -)
-- Se não souber algo, responda naturalmente que não sabe, como qualquer pessoa faria
-- NÃO mencione que é um assistente ou bot NUNCA. Se perguntarem, desvie com bom humor
-- Adapte o tom ao contexto da conversa: se a pessoa estiver brincando, brinque também
+- Seja educada e cortês, mantendo um tom natural de WhatsApp. Seja menos informal, sem gírias exageradas (evite excesso de "kkk" ou risadas falsas).
+- Se houver histórico de conversa do próprio Wesley, tente imitar sutilmente o estilo sem soar forçado, mas lembre-se que você é a assistente dele.
+- Seja direta e objetiva, como num chat real.
+- Não use markdown (sem **, sem #, sem listas com -).
+- Se não souber algo, diga que vai anotar para o Wesley responder pessoalmente em breve. NUNCA invente informações.
 
-HISTÓRICO RECENTE DA CONVERSA (para você pegar o estilo e contexto):
+Abaixo está o CONTEXTO contendo as informações profissionais, habilidades e portfólio do Wesley.
+Sempre que perguntado sobre trabalho ou habilidades dele, responda baseando-se EXCLUSIVAMENTE nesse contexto:
+{contexto}
+
+HISTÓRICO RECENTE DA CONVERSA (para referência):
 {historico}
 
 MENSAGEM RECEBIDA DE {nome_cliente}: "{texto}"
 
-Responda como o Wesley responderia, de forma curta e natural como num WhatsApp.
+Escreva apenas a resposta direta, de forma natural.
 """
 
 PROMPT_PESSOAL_AUDIO = """
-Você é o Wesley, respondendo por WhatsApp pessoal via áudio.
-Responda na primeira pessoa, como se fosse o Wesley falando num áudio de WhatsApp.
-- Seja muito informal, natural, como numa conversa de voz do dia a dia
-- NÃO use markdown
-- Escreva como se estivesse falando: "né", "tá", "tô", etc.
-- Seja curto e direto, áudio de WhatsApp não é discurso
+Você é a Assistente Virtual do WhatsApp pessoal do Wesley. Sua resposta será enviada como ÁUDIO.
+Você responde em nome dele de forma cortês, educada e natural de WhatsApp.
 
-HISTÓRICO RECENTE:
+Regras:
+1. Seja cortês e amigável, sem informalidade exagerada.
+2. EVITE QUALQUER formatação markdown.
+3. Escreva para ser falado (ex: "Node J S", "C Sharp", "cem por cento").
+4. Não invente informações. Se não souber, diga que o Wesley responde depois.
+
+Abaixo está o CONTEXTO profissional do Wesley. Use essas informações se perguntarem de trabalho ou habilidades dele. NUNCA invente:
+{contexto}
+
+HISTÓRICO DA CONVERSA:
 {historico}
 
 MENSAGEM DE {nome_cliente}: "{texto}"
@@ -254,15 +261,22 @@ class AtendimentoService:
     async def _responder_instancia_pessoal(
         self, ev_client: EvolutionClient, telefone: str, nome: str, texto: str
     ):
-        """Responde como o próprio Wesley, de forma informal, usando o histórico da conversa."""
+        """Responde como o assistente pessoal do Wesley, usando o histórico da conversa."""
         texto_lower = texto.lower()
         _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
         _quer_audio = any(k in texto_lower for k in _FORMATO_AUDIO)
 
         historico_str = await self._obter_historico(telefone, limite=8)  # mais histórico para pegar o estilo
+        
+        # Recupera o contexto do portfólio para a instância pessoal também
+        topico_query = " ".join(texto_lower.split()).strip() or texto
+        contexto_rag = self.rag.retrieve_smart(topico_query)
+        projeto_md = self.rag.load_project_if_mentioned(topico_query)
+        contexto = (projeto_md + "\n---\n" + contexto_rag) if projeto_md else contexto_rag
+        contexto = self._aplicar_token_budget(contexto, historico_str, texto)
 
         if _quer_audio:
-            resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, para_audio=True)
+            resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, contexto, para_audio=True)
             try:
                 tts = gTTS(text=resposta, lang="pt", slow=False)
                 audio_io = io.BytesIO()
@@ -277,7 +291,7 @@ class AtendimentoService:
                 await ev_client.send_text_message(telefone, resposta)
                 await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
         else:
-            resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, para_audio=False)
+            resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, contexto, para_audio=False)
             try:
                 await ev_client.send_text_message(telefone, resposta)
                 await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
@@ -285,11 +299,11 @@ class AtendimentoService:
                 logger.error(f"Erro ao enviar resposta pessoal para {telefone}: {e}")
 
     async def _gerar_resposta_pessoal(
-        self, nome: str, texto: str, historico: str, para_audio: bool = False
+        self, nome: str, texto: str, historico: str, contexto: str, para_audio: bool = False
     ) -> str:
-        """Gera resposta no estilo do Wesley pessoal (informal)."""
+        """Gera resposta no estilo assistente pessoal cortês."""
         template = PROMPT_PESSOAL_AUDIO if para_audio else PROMPT_PESSOAL
-        prompt = template.format(nome_cliente=nome, texto=texto, historico=historico)
+        prompt = template.format(nome_cliente=nome, texto=texto, historico=historico, contexto=contexto)
         try:
             response = self.llm_client.models.generate_content(
                 model=settings.gemini_model,
