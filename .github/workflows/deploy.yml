@@ -154,6 +154,10 @@ jobs:
             echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
             echo "EVOLUTION_API_KEY=${{ secrets.EVOLUTION_API_KEY }}" >> .env
             echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
+            echo "PANEL_SECRET_KEY=${{ secrets.PANEL_SECRET_KEY }}" >> .env
+            echo "OWNER_JID=${{ secrets.OWNER_JID }}" >> .env
+            echo "EVOLUTION_INSTANCE_TWO_NAME=${{ secrets.EVOLUTION_INSTANCE_TWO_NAME }}" >> .env
+            echo "INSTANCE_TWO_OWNER_JID=${{ secrets.INSTANCE_TWO_OWNER_JID }}" >> .env
 
             # Apaga índice FAISS antigo para forçar rebuild com todos os markdowns (projects/ incluído)
             rm -f vector_store.faiss vector_metadata.pkl
