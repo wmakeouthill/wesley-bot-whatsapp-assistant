@@ -140,6 +140,14 @@
                     <div class="page-subtitle">Allowlist e blocklist de números</div>
                 </div>
 
+                <!-- Seletor de instância específico para filtros -->
+                <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+                    <label style="font-size:.82rem;color:var(--text-muted)">Instância:</label>
+                    <select id="inst-select-filtros"
+                        style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:.875rem;outline:none">
+                    </select>
+                </div>
+
                 <div class="allowlist-card">
                     <h3>✅ Allowlist</h3>
                     <p>Só esses números recebem resposta da IA na instância selecionada (deixe vazio para atender todos).</p>
@@ -182,15 +190,29 @@
         async function initInstSelect() {
             const data = await api('GET', '/api/panel/dashboard');
             if (!data) return;
-            const sel = document.getElementById('inst-select');
-            sel.innerHTML = '';
-            data.instancias.forEach((inst, i) => {
-                const opt = document.createElement('option');
-                opt.value = inst;
-                opt.textContent = inst;
-                if (i === 0) opt.selected = true;
-                sel.appendChild(opt);
+            const selConversas = document.getElementById('inst-select');
+            const selFiltros = document.getElementById('inst-select-filtros');
+
+            [selConversas, selFiltros].forEach((sel, idx) => {
+                if (!sel) return;
+                sel.innerHTML = '';
+                data.instancias.forEach((inst, i) => {
+                    const opt = document.createElement('option');
+                    opt.value = inst;
+                    opt.textContent = inst;
+                    if (i === 0) opt.selected = true;
+                    sel.appendChild(opt);
+                });
             });
+
+            // Quando trocar a instância em Filtros, recarrega a allow/blocklist
+            if (selFiltros) {
+                selFiltros.addEventListener('change', () => {
+                    loadAllowlist();
+                });
+                // Carrega filtros iniciais para a primeira instância
+                loadAllowlist();
+            }
         }
         document.addEventListener('DOMContentLoaded', initInstSelect);
     </script>

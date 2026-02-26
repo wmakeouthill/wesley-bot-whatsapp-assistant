@@ -125,9 +125,15 @@ async function loadConversas(page = 1) {
 }
 
 function getInstancia() {
-  // Lê a primeira instância do dashboard (simplificado)
-  // Para múltiplas instâncias, poderia ter um seletor
-  return document.getElementById('inst-select')?.value || '';
+  // Prioriza o seletor de instância da tela de Filtros, se existir,
+  // senão usa o seletor de Conversas.
+  const selFiltros = document.getElementById('inst-select-filtros');
+  if (selFiltros && selFiltros.value) {
+    return selFiltros.value;
+  }
+
+  const selConversas = document.getElementById('inst-select');
+  return (selConversas && selConversas.value) ? selConversas.value : '';
 }
 
 async function toggleIA(instancia, chatJid, ativo) {
