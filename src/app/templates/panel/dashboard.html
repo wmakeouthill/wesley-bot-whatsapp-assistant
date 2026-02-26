@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel — Bot Admin</title>
+    <link rel="stylesheet" href="/static/panel/panel.css">
+</head>
+
+<body>
+
+    <div class="layout">
+
+        <!-- ── Sidebar ── -->
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <h2>🤖 Bot Admin</h2>
+                <span>Wesley WhatsApp Bot</span>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-item active" data-page="dashboard" onclick="navigateTo('dashboard')">
+                    <span class="icon">📊</span> Dashboard
+                </div>
+                <div class="nav-item" data-page="conversas" onclick="navigateTo('conversas')">
+                    <span class="icon">💬</span> Conversas
+                </div>
+                <div class="nav-item" data-page="instancias" onclick="navigateTo('instancias')">
+                    <span class="icon">📡</span> Instâncias
+                </div>
+                <div class="nav-item" data-page="allowlist" onclick="navigateTo('allowlist')">
+                    <span class="icon">🚫</span> Filtros
+                </div>
+            </nav>
+            <div class="sidebar-bottom">
+                <button class="btn-logout" onclick="logout()">↩ Sair</button>
+            </div>
+        </aside>
+
+        <!-- ── Main ── -->
+        <main class="main">
+
+            <!-- ── Dashboard ── -->
+            <div class="page active" id="page-dashboard">
+                <div>
+                    <div class="page-title">Dashboard</div>
+                    <div class="page-subtitle">Visão geral do bot</div>
+                </div>
+                <div class="cards-row">
+                    <div class="card">
+                        <div class="card-label">Conversas</div>
+                        <div class="card-value accent" id="stat-conversas">—</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Total Mensagens</div>
+                        <div class="card-value" id="stat-mensagens">—</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-label">Mensagens Hoje</div>
+                        <div class="card-value green" id="stat-hoje">—</div>
+                    </div>
+                </div>
+
+                <!-- Controle de IA por instância -->
+                <div class="table-wrap">
+                    <div class="table-header">
+                        <h3>IA por Instância</h3>
+                        <small style="color:var(--text-muted)">toggle = ativa/desativa globalmente</small>
+                    </div>
+                    <div style="padding:0 20px 12px" id="ia-status-global">
+                        <div class="loading">Carregando...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Conversas ── -->
+            <div class="page" id="page-conversas">
+                <div>
+                    <div class="page-title">Conversas</div>
+                    <div class="page-subtitle">Gerencie chats e controle de IA individualmente</div>
+                </div>
+
+                <!-- Seletor de instância para toggle -->
+                <div style="display:flex;gap:12px;align-items:center">
+                    <label style="font-size:.82rem;color:var(--text-muted)">Instância:</label>
+                    <select id="inst-select"
+                        style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:.875rem;outline:none">
+                    </select>
+                </div>
+
+                <!-- Chat histórico (escondido inicialmente) -->
+                <div id="chat-wrap" class="chat-wrap" style="display:none">
+                    <div class="chat-header">
+                        <button class="chat-back" onclick="fecharHistorico()">← Voltar</button>
+                        <strong id="chat-nome"></strong>
+                    </div>
+                    <div class="chat-messages" id="chat-messages"></div>
+                </div>
+
+                <!-- Tabela de conversas -->
+                <div class="table-wrap">
+                    <div class="table-header">
+                        <h3>Todas as conversas</h3>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Contato</th>
+                                <th>Última mensagem</th>
+                                <th>Horário</th>
+                                <th>IA</th>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody id="conversas-list">
+                            <tr>
+                                <td colspan="5" class="loading">Carregando...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="conversas-pagination"></div>
+            </div>
+
+            <!-- ── Instâncias ── -->
+            <div class="page" id="page-instancias">
+                <div>
+                    <div class="page-title">Instâncias</div>
+                    <div class="page-subtitle">Status de conexão e QR Code</div>
+                </div>
+                <div class="instances-grid" id="instances-grid">
+                    <div class="loading">Verificando...</div>
+                </div>
+            </div>
+
+            <!-- ── Filtros ── -->
+            <div class="page" id="page-allowlist">
+                <div>
+                    <div class="page-title">Filtros de Atendimento</div>
+                    <div class="page-subtitle">Allowlist e blocklist de números</div>
+                </div>
+
+                <div class="allowlist-card">
+                    <h3>✅ Allowlist</h3>
+                    <p>Só esses números recebem resposta da IA (deixe vazio para atender todos).</p>
+                    <label>Números permitidos (separados por vírgula, sem @, ex: 5521999999999)</label>
+                    <textarea id="allowlist-input" placeholder="5521999999999, 5511888888888"></textarea>
+
+                    <h3 style="margin-top:24px">🚫 Blocklist</h3>
+                    <p>Esses números nunca recebem resposta, mesmo que estejam na allowlist.</p>
+                    <label>Números bloqueados</label>
+                    <textarea id="blocklist-input" placeholder="5521000000000"></textarea>
+
+                    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                        <button class="btn-save" onclick="saveAllowlist()">💾 Salvar (em memória)</button>
+                        <small style="color:var(--text-muted)">Para persistir entre reinicializações, edite o .env na
+                            VPS.</small>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- ── QR Modal ── -->
+    <div class="modal-overlay" id="qr-modal" style="display:none" onclick="if(event.target===this) fecharModalQR()">
+        <div class="modal">
+            <h3>📱 Escanear QR Code</h3>
+            <p style="color:var(--text-muted);font-size:.8rem;margin-bottom:16px">Instância: <strong
+                    id="qr-instance-name"></strong></p>
+            <img id="qr-img" src="" alt="QR Code">
+            <p>Abra o WhatsApp → Aparelhos conectados → Conectar aparelho</p>
+            <button class="btn-close" onclick="fecharModalQR()">Fechar</button>
+        </div>
+    </div>
+
+    <!-- ── Toast ── -->
+    <div class="toast" id="toast"></div>
+
+    <script src="/static/panel/panel.js"></script>
+    <script>
+        // Popula o seletor de instâncias no load
+        async function initInstSelect() {
+            const data = await api('GET', '/api/panel/dashboard');
+            if (!data) return;
+            const sel = document.getElementById('inst-select');
+            sel.innerHTML = '';
+            data.instancias.forEach((inst, i) => {
+                const opt = document.createElement('option');
+                opt.value = inst;
+                opt.textContent = inst;
+                if (i === 0) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        }
+        document.addEventListener('DOMContentLoaded', initInstSelect);
+    </script>
+</body>
+
+</html>

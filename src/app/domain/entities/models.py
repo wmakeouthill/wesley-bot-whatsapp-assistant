@@ -44,3 +44,16 @@ class BotConfig(Base):
     chat_jid   = Column(String(100), nullable=True, index=True)   # NULL = config global da instância
     ia_ativa   = Column(Boolean, default=True, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AdminUser(Base):
+    """Usuário administrador do painel web.
+    Senha gerenciada via SSH com o script scripts/set_admin_password.py.
+    """
+    __tablename__ = "admin_user"
+
+    id            = Column(String(36), primary_key=True)
+    username      = Column(String(50), unique=True, nullable=False, index=True)
+    password_hash = Column(String(200), nullable=False)  # bcrypt hash
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -4,6 +4,11 @@ class Settings(BaseSettings):
     project_name: str = "Bot de WhatsApp (Evolution API)"
     version: str = "0.1.0"
     
+    # Painel Admin
+    panel_secret_key: str = "troque-por-uma-chave-aleatoria-e-longa-aqui"  # usado para assinar JWT
+    panel_jwt_expire_minutes: int = 480  # 8 horas de sessão
+
+    
     # Evolution API Settings
     evolution_api_url: str = "http://bot_evolution_api:8080" # URL interna no docker
     evolution_api_key: str = ""

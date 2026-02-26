@@ -138,3 +138,46 @@ No WhatsApp do número dono do bot, vá em **"Mensagens Salvas"** e envie:
 IA_ALLOWLIST=5521999999999,5511888888888  # Só esses respondem (vazio = todos)
 IA_BLOCKLIST=5521000000000               # Esses nunca respondem
 ```
+
+---
+
+## 8. Painel de Gestão Web
+
+O painel roda no mesmo container da API, em `http://IP_VPS:8000/panel`.
+
+### 8.1 — Adicione ao `.env` (chave secreta do JWT)
+
+```bash
+PANEL_SECRET_KEY=gere-uma-string-aleatoria-longa-aqui-use-openssl-rand-hex-32
+```
+
+### 8.2 — Crie o usuário admin (via SSH)
+
+Após o deploy, execute:
+
+```bash
+docker exec -it bot_api python /app/scripts/set_admin_password.py
+# Ou com argumento:
+docker exec -it bot_api python /app/scripts/set_admin_password.py --username admin --password SENHA_FORTE
+```
+
+### 8.3 — Acesse o painel
+
+```
+http://IP_VPS:8000/panel/login
+```
+
+> **Recomendação de segurança:** use um SSH tunnel para acessar o painel sem expô-lo publicamente:
+> ```bash
+> ssh -L 8000:localhost:8000 ubuntu@IP_VPS
+> # Depois acesse: http://localhost:8000/panel/login
+> ```
+
+### 8.4 — Funcionalidades do painel
+
+| Seção | O que faz |
+|---|---|
+| **Dashboard** | Stats gerais + toggle IA global por instância |
+| **Conversas** | Lista todos os contatos com toggle IA individual + histórico tipo chat |
+| **Instâncias** | Status de conexão + geração de QR Code diretamente no painel |
+| **Filtros** | Editar allowlist e blocklist de números (efeito imediato) |

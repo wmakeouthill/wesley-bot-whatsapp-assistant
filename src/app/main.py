@@ -1,5 +1,6 @@
 import logging
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from app.infrastructure.config.settings import settings
 
 logging.basicConfig(
@@ -13,13 +14,19 @@ def create_app() -> FastAPI:
         version=settings.version,
     )
 
+    # ── Static files (CSS, JS do painel) ──
+    app.mount("/static", StaticFiles(directory="src/app/static"), name="static")
+
     @app.get("/health", tags=["Health"])
     async def health_check():
         return {"status": "ok", "app": settings.project_name}
 
     from app.interfaces.api.v1.routers import whatsapp_router, webhook_router
+    from app.interfaces.api.v1.routers.panel_router import router as panel_router
+
     app.include_router(whatsapp_router.router)
     app.include_router(webhook_router.router)
+    app.include_router(panel_router)
 
     return app
 
