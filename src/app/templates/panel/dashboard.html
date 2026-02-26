@@ -80,7 +80,7 @@
                     <div class="page-subtitle">Gerencie chats e controle de IA individualmente</div>
                 </div>
 
-                <!-- Seletor de instância para toggle -->
+                <!-- Seletor de instância para Conversas -->
                 <div style="display:flex;gap:12px;align-items:center">
                     <label style="font-size:.82rem;color:var(--text-muted)">Instância:</label>
                     <select id="inst-select"
@@ -193,7 +193,7 @@
             const selConversas = document.getElementById('inst-select');
             const selFiltros = document.getElementById('inst-select-filtros');
 
-            [selConversas, selFiltros].forEach((sel, idx) => {
+            [selConversas, selFiltros].forEach((sel) => {
                 if (!sel) return;
                 sel.innerHTML = '';
                 data.instancias.forEach((inst, i) => {
@@ -212,6 +212,13 @@
                 });
                 // Carrega filtros iniciais para a primeira instância
                 loadAllowlist();
+            }
+
+            // Quando trocar a instância em Conversas, recarrega a lista
+            if (selConversas) {
+                selConversas.addEventListener('change', () => {
+                    loadConversas(1);
+                });
             }
         }
         document.addEventListener('DOMContentLoaded', initInstSelect);

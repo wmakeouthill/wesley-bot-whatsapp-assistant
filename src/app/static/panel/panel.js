@@ -77,7 +77,13 @@ async function loadConversas(page = 1) {
   const paginEl = document.getElementById('conversas-pagination');
   listEl.innerHTML = '<tr><td colspan="5" class="loading">Carregando...</td></tr>';
 
-  const data = await api('GET', `/api/panel/conversations?page=${page}&per_page=20`);
+  const instancia = getInstanciaConversas();
+  if (!instancia) {
+    toast('Selecione uma instância primeiro', 'red');
+    return;
+  }
+
+  const data = await api('GET', `/api/panel/conversations?instancia=${encodeURIComponent(instancia)}&page=${page}&per_page=20`);
   if (!data) return;
 
   if (!data.conversas.length) {
@@ -102,7 +108,7 @@ async function loadConversas(page = 1) {
         <td style="white-space:nowrap;font-size:.8rem;color:var(--text-muted)">${dt}</td>
         <td>
           <label class="toggle">
-            <input type="checkbox" ${c.ia_ativa ? 'checked' : ''} onchange="toggleIA(getInstancia(), '${c.numero}', this.checked)">
+            <input type="checkbox" ${c.ia_ativa ? 'checked' : ''} onchange="toggleIA(getInstanciaConversas(), '${c.numero}', this.checked)">
             <span class="toggle-slider"></span>
           </label>
         </td>
@@ -132,6 +138,11 @@ function getInstancia() {
     return selFiltros.value;
   }
 
+  const selConversas = document.getElementById('inst-select');
+  return (selConversas && selConversas.value) ? selConversas.value : '';
+}
+
+function getInstanciaConversas() {
   const selConversas = document.getElementById('inst-select');
   return (selConversas && selConversas.value) ? selConversas.value : '';
 }

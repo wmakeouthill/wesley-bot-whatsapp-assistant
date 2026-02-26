@@ -155,11 +155,12 @@ async def panel_dashboard(current_user: str = Depends(get_current_user)):
 
 @router.get("/api/panel/conversations", tags=["Painel Admin"])
 async def panel_conversations(
+    instancia: str,
     page: int = 1,
     per_page: int = 20,
     current_user: str = Depends(get_current_user),
 ):
-    """Lista de conversas com paginação e status de IA."""
+    """Lista de conversas com paginação e status de IA por instância."""
     offset = (page - 1) * per_page
 
     async with async_session() as session:
@@ -182,7 +183,7 @@ async def panel_conversations(
         result = await session.execute(stmt)
         rows = result.all()
 
-        # Busca configs de IA
+        # Busca configs de IA desta instância
         jids_numeros = []
         for row in rows:
             jid = row[0].whatsapp_id
@@ -190,10 +191,11 @@ async def panel_conversations(
             jids_numeros.append(num)
 
         stmt_cfg = select(BotConfig).where(
+            BotConfig.instancia == instancia,
             or_(
                 BotConfig.chat_jid.in_(jids_numeros),
                 BotConfig.chat_jid.is_(None),
-            )
+            ),
         )
         cfgs = (await session.execute(stmt_cfg)).scalars().all()
         cfg_map: dict = {c.chat_jid: c.ia_ativa for c in cfgs}
