@@ -99,7 +99,7 @@ Perfil curioso, focado em aprendizado contínuo e sempre com um projeto novo em 
 
 ### Pós-Graduação
 
-- **Pós-graduação em Desenvolvimento FullStack Java** - Em andamento
+- **Pós-graduação em Desenvolvimento FullStack Java** - Concluída em fevereiro de 2026
 - **MBA em Gestão de Projetos** - Em andamento
 
 ## Habilidades Técnicas
@@ -334,7 +334,7 @@ Calculadora de investimentos em Angular 18, com projeções de juros compostos e
 
 **2026-Atual:** Desenvolvimento Full-Stack em startup (AutoU)
 
-- Stack Python + React 19 + Vite em projetos de gamificação, IA e insights
+- Stack Python + React 19 + Vite em projetos de gamificação, IA e insights, monitoramento de imagens com IA, e análises preditivas.
 - Ambientes AWS e Google Cloud; GitHub Actions, Vercel, Docker Compose
 - Algoritmos preditivos (Prophet): recomendações de transferência, compras e substitutos
 - Full cycle em projetos para grandes empresas; entrega veloz e alta exposição a clientes

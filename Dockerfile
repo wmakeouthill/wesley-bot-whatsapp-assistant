@@ -1,45 +1,55 @@
 # Dockerfile
-FROM python:3.11-slim
+### Stage 1: Builder (Poetry + toolchain) ###############################
+FROM python:3.11-slim AS builder
 
-# Variáveis de ambiente
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     POETRY_VERSION=1.8.2 \
     POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_CREATE=false \
-    PYTHONPATH="/app/src"
+    POETRY_VIRTUALENVS_CREATE=false
 
-# Adicionar o Poetry no PATH
 ENV PATH="$POETRY_HOME/bin:$PATH"
 
-# Dependências de sistema (necessárias para compilar alguns pacotes C++ como Faiss e dependências SQLite)
+WORKDIR /app
+
+# Dependências de build (faiss, psycopg2, etc.)
 RUN apt-get update \
-    && apt-get install -y curl build-essential \
+    && apt-get install -y --no-install-recommends curl build-essential \
     && curl -sSL https://install.python-poetry.org | python3 - \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# Copia dependências primeiro (aproveita cache do Docker)
-# poetry.lock é necessário para instalação reproduzível (inclui asyncpg para PostgreSQL assíncrono)
+# Apenas arquivos de dependência para maximizar cache
 COPY pyproject.toml poetry.lock ./
 
-# Sincroniza lock com pyproject.toml (evita falha quando lock está desatualizado)
-RUN poetry lock --no-update
+# Gera requirements.txt reproduzível a partir do lock do Poetry
+RUN poetry lock --no-update \
+    && poetry export -f requirements.txt --output requirements.txt --without-hashes
 
-# Instala todas as dependências do projeto (inclui asyncpg para SQLAlchemy async)
-RUN poetry install --no-root --no-interaction --no-ansi
 
-# Falha no build se asyncpg não estiver instalado (evita erro em runtime)
-RUN python -c "import asyncpg"
+### Stage 2: Runtime enxuto #############################################
+FROM python:3.11-slim
 
-# Copia o resto da aplicação
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH="/app/src"
+
+WORKDIR /app
+
+# Copia apenas o requirements já resolvido do builder
+COPY --from=builder /app/requirements.txt /app/requirements.txt
+
+# Instala dependências em camada única e sem cache de pip
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpq5 \
+    && pip install --no-cache-dir -r /app/requirements.txt \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copia o restante da aplicação
 COPY . .
 
-# Expõe a porta do FastAPI
 EXPOSE 8000
 
-# EntryPoint que aplica migrations Alembic antes de subir o uvicorn
-# Usa /bin/sh para não depender da permissão de execução do script (evita "permission denied" no Linux)
+# Mantém o mesmo entrypoint atual (alembic + uvicorn)
 ENTRYPOINT ["/bin/sh", "/app/docker-entrypoint.sh"]
