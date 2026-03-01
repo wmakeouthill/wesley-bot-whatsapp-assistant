@@ -164,6 +164,28 @@ jobs:
 
             # Recarrega Máquinas
             sudo docker compose down || docker compose down
+
+            # -------------------------------------------------------------------
+            # Limpeza Docker: garante que apenas a imagem atual existe na VPS.
+            # Executado APÓS o compose down (nenhum container em uso) e ANTES
+            # do build, para que o --build parta de uma base limpa.
+            # -------------------------------------------------------------------
+
+            # 1) Remove a imagem buildada do serviço 'api' (rebuilt a cada deploy)
+            #    "docker compose images -q api" retorna o Image ID atual, se existir
+            sudo docker compose images -q api 2>/dev/null \
+              | xargs --no-run-if-empty sudo docker rmi --force 2>/dev/null || true
+
+            # 2) Remove camadas órfãs (dangling layers de builds anteriores sem tag)
+            sudo docker image prune --force 2>/dev/null || true
+
+            # 3) Limpa TODO o cache do BuildKit — maior ganho de espaço em disco
+            #    O próximo build baixa/reusa camadas via registry (layer cache do Docker Hub),
+            #    mas não gasta disco local com cache acumulado de deploys antigos.
+            sudo docker builder prune --all --force 2>/dev/null || true
+
+            echo "🧹 Limpeza Docker concluída."
+
             # Força pull da imagem evoapicloud (v2.3.7+) antes de subir
             sudo docker compose pull evolution-api || docker compose pull evolution-api || true
             sudo docker compose up -d --build || docker compose up -d --build

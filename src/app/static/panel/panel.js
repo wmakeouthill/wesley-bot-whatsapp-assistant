@@ -9,7 +9,19 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /* ------------------- Navigation ------------------- */
+function closeSidebar() {
+  document.getElementById('layout').classList.remove('sidebar-open');
+  document.body.classList.remove('sidebar-open');
+}
+
+function toggleSidebar() {
+  const layout = document.getElementById('layout');
+  layout.classList.toggle('sidebar-open');
+  document.body.classList.toggle('sidebar-open', layout.classList.contains('sidebar-open'));
+}
+
 function navigateTo(page) {
+  closeSidebar();
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const el = document.getElementById('page-' + page);
@@ -103,28 +115,27 @@ async function loadConversas(page = 1) {
 
   listEl.innerHTML = data.conversas.map(c => {
     const dt = c.ultima_mensagem_dt ? new Date(c.ultima_mensagem_dt + 'Z').toLocaleString('pt-BR') : '—';
-    const badgeClass = c.ia_ativa ? 'green' : 'red';
     const preview = (c.ultima_mensagem || '').substring(0, 55) + (c.ultima_mensagem && c.ultima_mensagem.length > 55 ? '...' : '');
     const jidEnc = c.whatsapp_id.replace(/@/g, '__at__');
     return `
-      <tr>
-        <td>
+      <tr class="conversa-row">
+        <td data-label="Contato">
           <strong>${escHtml(c.nome)}</strong><br>
           <small style="color:var(--text-muted)">${c.numero}</small>
         </td>
-        <td style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-muted);font-size:.82rem">
+        <td data-label="Última mensagem" class="conversa-preview">
           ${escHtml(preview) || '—'}
         </td>
-        <td style="white-space:nowrap;font-size:.8rem;color:var(--text-muted)">${dt}</td>
-        <td>
+        <td data-label="Horário" class="conversa-dt">${dt}</td>
+        <td data-label="IA">
           <label class="toggle">
             <input type="checkbox" ${c.ia_ativa ? 'checked' : ''} onchange="toggleIA(getInstanciaConversas(), '${c.numero}', this.checked)">
             <span class="toggle-slider"></span>
           </label>
         </td>
-        <td>
+        <td data-label="Ações">
           <button onclick="verHistorico('${jidEnc}', '${escHtml(c.nome)}')" 
-                  style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.78rem">
+                  class="btn-histórico">
             Histórico
           </button>
         </td>

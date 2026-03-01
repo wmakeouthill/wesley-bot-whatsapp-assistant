@@ -1,3 +1,4 @@
+import gc
 import os
 import re
 import faiss
@@ -215,7 +216,14 @@ class PortfolioRAG:
     # -----------------------------------------------------------------------
 
     def _build_index(self):
-        """Reconstrói o índice FAISS com metadata source-aware por chunk."""
+        """
+        Reconstrói o índice FAISS com metadata source-aware por chunk.
+
+        Estratégia de memória: processa em duas passagens para evitar manter
+        all_chunks + embeddings + chunks_metadata simultaneamente na RAM.
+          1ª passagem: monta all_chunks (texto + meta) e libera logo após geração dos embeddings.
+          2ª passagem: cria emb_matrix e libera a lista de embeddings antes de adicionar ao FAISS.
+        """
         if not self.data_dir.exists():
             logger.warning(f"Diretório do portfólio não encontrado: {self.data_dir}")
             return
@@ -223,7 +231,8 @@ class PortfolioRAG:
         md_files = sorted(self.data_dir.glob("**/*.md"))
         logger.info(f"RAG: indexando {len(md_files)} arquivos markdown...")
 
-        all_chunks: List[Tuple[str, Dict]] = []  # (texto, meta)
+        # --- 1ª passagem: extração de chunks -----------------------------------
+        all_chunks: List[Tuple[str, Dict]] = []
 
         for md_file in md_files:
             try:
@@ -245,8 +254,10 @@ class PortfolioRAG:
                 header = f"--- Documento: {rel_str} ---\n"
                 if tags:
                     header += f"Tags: {', '.join(tags)}\n"
-                    
+
                 texto_com_header = header + content
+                # Libera o conteúdo bruto do arquivo da RAM imediatamente
+                del content
 
                 file_chunks = self._chunk_text(texto_com_header, chunk_size=1000, overlap=100)
                 for chunk in file_chunks:
@@ -264,29 +275,43 @@ class PortfolioRAG:
             logger.warning("Nenhum texto extraído. RAG vazio.")
             return
 
-        embeddings = []
+        total_chunks = len(all_chunks)
+
+        # --- 2ª passagem: geração de embeddings (streaming, sem duplicar textos) --
+        # Usa array numpy pré-alocado para evitar realocações sucessivas da lista Python
+        embeddings_list: List[List[float]] = []
         self.chunks_metadata = []
+
         for i, (chunk_text, meta) in enumerate(all_chunks):
             response = self.client.models.embed_content(
                 model=self.embedding_model,
                 contents=chunk_text,
                 config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
             )
-            embeddings.append(response.embeddings[0].values)
+            embeddings_list.append(response.embeddings[0].values)
             meta["id"] = i
             self.chunks_metadata.append(meta)
 
-        emb_matrix = np.array(embeddings).astype("float32")
-        dimension = emb_matrix.shape[1]
+        # Libera all_chunks antes de criar a matriz numpy (pico de memória reduzido)
+        del all_chunks
+        gc.collect()
 
+        emb_matrix = np.array(embeddings_list, dtype="float32")
+        # Libera a lista de embeddings Python agora que temos o array numpy
+        del embeddings_list
+        gc.collect()
+
+        dimension = emb_matrix.shape[1]
         self.index = faiss.IndexFlatL2(dimension)
         self.index.add(emb_matrix)
+        del emb_matrix
+        gc.collect()
 
         faiss.write_index(self.index, self.index_path)
         with open(self.metadata_path, "wb") as f:
             pickle.dump(self.chunks_metadata, f)
 
-        logger.info(f"RAG Index gerado com sucesso! ({len(all_chunks)} chunks).")
+        logger.info(f"RAG Index gerado com sucesso! ({total_chunks} chunks).")
 
     # -----------------------------------------------------------------------
     # Retrieval

@@ -10,10 +10,13 @@
 
 <body>
 
-    <div class="layout">
+    <div class="layout" id="layout">
 
-        <!-- ── Sidebar ── -->
-        <aside class="sidebar">
+        <!-- Overlay para fechar o menu no mobile -->
+        <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()" aria-hidden="true"></div>
+
+        <!-- ── Sidebar (drawer no mobile) ── -->
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-logo">
                 <h2>🤖 Bot Admin</h2>
                 <span>Wesley WhatsApp Bot</span>
@@ -39,6 +42,10 @@
 
         <!-- ── Main ── -->
         <main class="main">
+            <!-- Botão menu mobile (só visível em telas pequenas) -->
+            <button type="button" class="btn-menu-mobile" id="btn-menu-mobile" onclick="toggleSidebar()" aria-label="Abrir menu">
+                <span class="hamburger"></span>
+            </button>
 
             <!-- ── Dashboard ── -->
             <div class="page active" id="page-dashboard">
@@ -103,7 +110,7 @@
                 </div>
 
                 <!-- Tabela de conversas -->
-                <div class="table-wrap">
+                <div class="table-wrap conversas-table-wrap">
                     <div class="table-header">
                         <h3>Todas as conversas</h3>
                     </div>
@@ -251,6 +258,14 @@
             }
         }
         document.addEventListener('DOMContentLoaded', initInstSelect);
+
+        // Fechar menu ao redimensionar para desktop
+        window.addEventListener('resize', () => {
+          if (window.innerWidth > 768) {
+            document.getElementById('layout').classList.remove('sidebar-open');
+            document.body.classList.remove('sidebar-open');
+          }
+        });
     </script>
 </body>
 

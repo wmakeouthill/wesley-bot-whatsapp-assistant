@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, BackgroundTasks
+import asyncio
 import logging
 import json
 
@@ -9,6 +10,23 @@ from app.infrastructure.config.settings import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+
+# ---------------------------------------------------------------------------
+# Controle de concorrência: evita acúmulo ilimitado de tasks em memória
+# sob flood de webhooks (muitas mensagens simultâneas).
+# MAX_CONCURRENT_WEBHOOKS = máximo de processar_webhook rodando ao mesmo tempo.
+# Webhooks extras aguardam no semáforo sem criar novas goroutines ilimitadas.
+# ---------------------------------------------------------------------------
+MAX_CONCURRENT_WEBHOOKS = 10
+_webhook_semaphore = asyncio.Semaphore(MAX_CONCURRENT_WEBHOOKS)
+
+
+async def _processar_com_limite(
+    service: AtendimentoService, body: WebhookBody, client: EvolutionClient
+) -> None:
+    """Wrapper que garante no máximo MAX_CONCURRENT_WEBHOOKS processamentos simultâneos."""
+    async with _webhook_semaphore:
+        await service.processar_webhook(body, client)
 
 # ---------------------------------------------------------------------------
 # Instâncias dos clientes para cada número/instância do Evolution API
@@ -69,8 +87,9 @@ async def receive_evolution_webhook(
             client = evolution_client_1
             logger.info(f"Roteando para instância PORTFÓLIO: {body.instance}")
 
-        # Passa o client correto para o service processar em background
-        background_tasks.add_task(atendimento_service.processar_webhook, body, client)
+        # Passa o client correto para o service processar em background,
+        # respeitando o semáforo de concorrência máxima
+        background_tasks.add_task(_processar_com_limite, atendimento_service, body, client)
 
     except ValueError as e:
         logger.warning(
