@@ -1,64 +1,67 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Login — Bot Admin</title>
-  <link rel="stylesheet" href="/static/panel/panel.css">
+  <link rel="stylesheet" href="/static/panel/panel.css?v=2">
 </head>
+
 <body>
-<div class="login-wrap">
-  <div class="login-card">
-    <h1>🤖 Bot Admin</h1>
-    <p class="subtitle">Painel de gestão do WhatsApp Bot</p>
+  <div class="login-wrap">
+    <div class="login-card">
+      <h1>🤖 Bot Admin</h1>
+      <p class="subtitle">Painel de gestão do WhatsApp Bot</p>
 
-    <div class="form-group">
-      <label>Usuário</label>
-      <input type="text" id="username" placeholder="admin" autocomplete="username" autofocus>
+      <div class="form-group">
+        <label>Usuário</label>
+        <input type="text" id="username" placeholder="admin" autocomplete="username" autofocus>
+      </div>
+      <div class="form-group">
+        <label>Senha</label>
+        <input type="password" id="password" placeholder="••••••••" autocomplete="current-password"
+          onkeydown="if(event.key==='Enter') doLogin()">
+      </div>
+      <button class="btn-primary" id="btn-login" onclick="doLogin()">Entrar</button>
+      <div class="error-msg" id="error-msg"></div>
     </div>
-    <div class="form-group">
-      <label>Senha</label>
-      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password"
-             onkeydown="if(event.key==='Enter') doLogin()">
-    </div>
-    <button class="btn-primary" id="btn-login" onclick="doLogin()">Entrar</button>
-    <div class="error-msg" id="error-msg"></div>
   </div>
-</div>
 
-<script>
-async function doLogin() {
-  const username = document.getElementById('username').value.trim();
-  const password = document.getElementById('password').value;
-  const errEl    = document.getElementById('error-msg');
-  const btn      = document.getElementById('btn-login');
+  <script>
+    async function doLogin() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const errEl = document.getElementById('error-msg');
+      const btn = document.getElementById('btn-login');
 
-  errEl.textContent = '';
-  if (!username || !password) { errEl.textContent = 'Preencha todos os campos.'; return; }
+      errEl.textContent = '';
+      if (!username || !password) { errEl.textContent = 'Preencha todos os campos.'; return; }
 
-  btn.disabled = true;
-  btn.textContent = 'Entrando...';
+      btn.disabled = true;
+      btn.textContent = 'Entrando...';
 
-  try {
-    const r = await fetch('/api/panel/login', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (r.ok) {
-      window.location.href = '/panel/';
-    } else {
-      const err = await r.json();
-      errEl.textContent = err.detail || 'Usuário ou senha incorretos.';
+      try {
+        const r = await fetch('/api/panel/login', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (r.ok) {
+          window.location.href = '/panel/';
+        } else {
+          const err = await r.json();
+          errEl.textContent = err.detail || 'Usuário ou senha incorretos.';
+        }
+      } catch (e) {
+        errEl.textContent = 'Erro de conexão. Tente novamente.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Entrar';
+      }
     }
-  } catch (e) {
-    errEl.textContent = 'Erro de conexão. Tente novamente.';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Entrar';
-  }
-}
-</script>
+  </script>
 </body>
+
 </html>
