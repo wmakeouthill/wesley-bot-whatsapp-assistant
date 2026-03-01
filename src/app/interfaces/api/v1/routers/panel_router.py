@@ -157,15 +157,28 @@ async def panel_dashboard(current_user: str = Depends(get_current_user)):
 async def panel_conversations(
     instancia: str,
     page: int = 1,
-    per_page: int = 20,
+    per_page: int = 10,
+    search: Optional[str] = None,
     current_user: str = Depends(get_current_user),
 ):
-    """Lista de conversas com paginação e status de IA por instância."""
+    """Lista de conversas com paginação (10 por página), pesquisa por número/nome e status de IA por instância."""
     offset = (page - 1) * per_page
 
     async with async_session() as session:
-        # Total
-        total = (await session.execute(select(func.count(Cliente.id)))).scalar_one()
+        # Base: todos os clientes (com filtro opcional por nome/número)
+        base_stmt = select(Cliente)
+        count_stmt = select(func.count(Cliente.id))
+        if search and search.strip():
+            termo = f"%{search.strip()}%"
+            filtro = or_(
+                Cliente.nome.ilike(termo),
+                Cliente.whatsapp_id.ilike(termo),
+            )
+            base_stmt = base_stmt.where(filtro)
+            count_stmt = count_stmt.where(filtro)
+
+        # Total (com filtro)
+        total = (await session.execute(count_stmt)).scalar_one()
 
         # Últimas mensagens por cliente (subquery para pegar a mais recente)
         # Busca clientes ordenados pela mensagem mais recente
@@ -176,7 +189,17 @@ async def panel_conversations(
             )
             .outerjoin(Mensagem, Mensagem.id_cliente == Cliente.id)
             .group_by(Cliente.id)
-            .order_by(desc("ultima_msg"))
+        )
+        if search and search.strip():
+            termo = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Cliente.nome.ilike(termo),
+                    Cliente.whatsapp_id.ilike(termo),
+                )
+            )
+        stmt = (
+            stmt.order_by(desc("ultima_msg"))
             .offset(offset)
             .limit(per_page)
         )

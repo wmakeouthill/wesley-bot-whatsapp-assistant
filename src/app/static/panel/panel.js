@@ -71,6 +71,8 @@ async function loadDashboard() {
 }
 
 /* ------------------- Conversas ------------------- */
+let conversasSearchTerm = '';
+
 async function loadConversas(page = 1) {
   currentPage = page;
   const listEl = document.getElementById('conversas-list');
@@ -83,11 +85,19 @@ async function loadConversas(page = 1) {
     return;
   }
 
-  const data = await api('GET', `/api/panel/conversations?instancia=${encodeURIComponent(instancia)}&page=${page}&per_page=20`);
+  const params = new URLSearchParams({
+    instancia,
+    page: String(page),
+    per_page: '10',
+  });
+  if (conversasSearchTerm.trim()) {
+    params.set('search', conversasSearchTerm.trim());
+  }
+  const data = await api('GET', `/api/panel/conversations?${params.toString()}`);
   if (!data) return;
 
   if (!data.conversas.length) {
-    listEl.innerHTML = '<tr><td colspan="5" class="empty">Nenhuma conversa ainda.</td></tr>';
+    listEl.innerHTML = '<tr><td colspan="5" class="empty">Nenhuma conversa encontrada.</td></tr>';
     return;
   }
 

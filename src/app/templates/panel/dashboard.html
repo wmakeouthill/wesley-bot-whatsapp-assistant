@@ -81,11 +81,16 @@
                 </div>
 
                 <!-- Seletor de instância para Conversas -->
-                <div style="display:flex;gap:12px;align-items:center">
-                    <label style="font-size:.82rem;color:var(--text-muted)">Instância:</label>
-                    <select id="inst-select"
-                        style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:.875rem;outline:none">
-                    </select>
+                <div class="conversas-toolbar">
+                    <div class="conversas-filters">
+                        <label style="font-size:.82rem;color:var(--text-muted)">Instância:</label>
+                        <select id="inst-select"
+                            style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:.875rem;outline:none">
+                        </select>
+                        <input type="search" id="conversas-search" placeholder="Pesquisar por número ou nome..."
+                            class="conversas-search-input"
+                            aria-label="Pesquisar conversas por número ou nome">
+                    </div>
                 </div>
 
                 <!-- Chat histórico (escondido inicialmente) -->
@@ -149,6 +154,9 @@
                 </div>
 
                 <div class="allowlist-card">
+                    <p class="allowlist-important">
+                        <strong>Por que o bot parou de responder?</strong> Não há limite de quantidade de números. O bot deixa de responder quando: (1) a <strong>allowlist</strong> tem números e o contato não está nela; (2) o número está na <strong>blocklist</strong>; ou (3) a IA está desativada (no Dashboard ou no toggle da conversa). Deixe a allowlist vazia para atender todos.
+                    </p>
                     <h3>✅ Allowlist</h3>
                     <p>Só esses números recebem resposta da IA na instância selecionada (deixe vazio para atender todos).</p>
                     <label>Números permitidos (separados por vírgula, sem @, ex: 5521999999999)</label>
@@ -218,6 +226,27 @@
             if (selConversas) {
                 selConversas.addEventListener('change', () => {
                     loadConversas(1);
+                });
+            }
+
+            // Pesquisa de conversas: debounce e recarrega página 1
+            const searchInput = document.getElementById('conversas-search');
+            if (searchInput) {
+                let searchTimeout;
+                searchInput.addEventListener('input', () => {
+                    conversasSearchTerm = searchInput.value;
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(() => {
+                        if (document.getElementById('page-conversas').classList.contains('active')) {
+                            loadConversas(1);
+                        }
+                    }, 350);
+                });
+                searchInput.addEventListener('search', () => {
+                    conversasSearchTerm = searchInput.value;
+                    if (document.getElementById('page-conversas').classList.contains('active')) {
+                        loadConversas(1);
+                    }
                 });
             }
         }
