@@ -7,7 +7,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}  # wmakeouthill/wesley-bot-whatsapp-assistant
 
 # ──────────────────────────────────────────────────────────────────────
 # Job 1 — Build & Push
@@ -26,6 +25,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # GHCR exige nomes 100% lowercase — github.repository pode
+      # ter maiúsculas (ex: Wmakeouthill/Repo), isso causa "manifest unknown"
+      - name: Normalizar nome da imagem (lowercase)
+        id: image
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Login no GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
         with:
@@ -42,7 +47,7 @@ jobs:
           context: .
           push: true
           # Apenas :latest — sem tag SHA para não acumular imagens antigas
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
           # Cache de layers entre runs — reutiliza pip install quando
           # pyproject.toml/poetry.lock não mudou (economia de ~3-5 min)
           cache-from: type=gha
