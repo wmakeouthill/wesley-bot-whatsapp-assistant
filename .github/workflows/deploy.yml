@@ -48,6 +48,11 @@ jobs:
           push: true
           # Apenas :latest — sem tag SHA para não acumular imagens antigas
           tags: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
+          # Desabilita attestações de provenance/SBOM — o build-push-action v4+
+          # as adiciona por padrão como entrada "unknown/unknown" no manifest OCI,
+          # o que causa "manifest unknown" em Docker clients mais antigos na VPS.
+          provenance: false
+          sbom: false
           # Cache de layers entre runs — reutiliza pip install quando
           # pyproject.toml/poetry.lock não mudou (economia de ~3-5 min)
           cache-from: type=gha
@@ -231,23 +236,27 @@ jobs:
             # ── Para containers atuais ─────────────────────────────────────
             sudo docker compose down || docker compose down
 
-            # ── Login no GHCR para puxar imagem privada ────────────────────
+            # ── Login no GHCR (necessário para pacote privado)  ───────────
+            # Se o pacote GHCR for público, o login ainda funciona mas não
+            # é obrigatório. Se for privado, o CR_PAT precisa ter scope
+            # "repo" + "read:packages" (packages privados exigem repo scope).
             echo "${{ secrets.CR_PAT }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
             if [ $? -ne 0 ]; then
-              echo "❌ ERRO: Falha no login GHCR!"
-              exit 1
+              echo "⚠️  Login GHCR falhou — tentando como pacote público (sem auth)..."
+              sudo docker logout ghcr.io 2>/dev/null || true
+            else
+              echo "✅ Login GHCR OK"
             fi
-            echo "✅ Login GHCR OK"
 
             # ── Pull da imagem pré-buildada (segundos, não minutos) ────────
             echo "Puxando imagem ghcr.io/wmakeouthill/wesley-bot-whatsapp-assistant:latest..."
-            if ! sudo docker compose pull api; then
-              echo "❌ ERRO: Falha ao puxar imagem do GHCR! Verificar permissões do pacote."
-              echo "Tentando pull direto como fallback..."
-              if ! sudo docker pull ghcr.io/wmakeouthill/wesley-bot-whatsapp-assistant:latest; then
-                echo "❌ ERRO: Pull direto também falhou. Abortando deploy."
-                exit 1
-              fi
+            if ! sudo docker pull ghcr.io/wmakeouthill/wesley-bot-whatsapp-assistant:latest; then
+              echo "❌ ERRO: Pull falhou."
+              echo "Causa provável: pacote privado no GHCR e CR_PAT sem scope 'repo'."
+              echo "Soluções:"
+              echo "  1) Adicionar scope 'repo' ao PAT CR_PAT no GitHub Settings"
+              echo "  2) Tornar o pacote público: GitHub → Profile → Packages → Package settings → Public"
+              exit 1
             fi
             echo "✅ Imagem API puxada com sucesso"
 
