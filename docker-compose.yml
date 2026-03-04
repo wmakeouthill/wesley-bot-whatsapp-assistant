@@ -20,6 +20,15 @@ services:
       - WEBHOOK_URL=http://${VPS_IP:-163.176.194.195}:8000/webhooks/evolution
       # Acesso direto ao banco da Evolution para resolver LID → telefone
       - EVOLUTION_DB_URL=postgresql://bot_user:${POSTGRES_PASSWORD}@bot_postgres:5432/evolution_db
+    depends_on:
+      bot_postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - bot_network
 
@@ -30,7 +39,10 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - bot_redis
+      bot_postgres:
+        condition: service_healthy
+      bot_redis:
+        condition: service_started
     environment:
       # Configurações do servidor
       - SERVER_URL=http://${VPS_IP:-163.176.194.195}:8080
@@ -38,9 +50,12 @@ services:
       - LOG_LEVEL=ERROR,WARN
 
       # Banco de dados - persiste tudo para resolver LID → telefone
+      # connection_limit=5: limita conexões no pool Prisma (evita esgotamento)
+      # pool_timeout=30: aguarda até 30s por conexão livre antes de falhar
+      # connect_timeout=10: timeout ao estabelecer nova conexão (evita hang indefinido)
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=postgresql://bot_user:${POSTGRES_PASSWORD}@bot_postgres:5432/evolution_db?schema=public
+      - DATABASE_CONNECTION_URI=postgresql://bot_user:${POSTGRES_PASSWORD}@bot_postgres:5432/evolution_db?schema=public&connection_limit=5&pool_timeout=30&connect_timeout=10
       - DATABASE_SAVE_DATA_INSTANCE=true
       - DATABASE_SAVE_DATA_NEW_MESSAGE=true
       - DATABASE_SAVE_DATA_MESSAGE_UPDATE=true
@@ -71,6 +86,13 @@ services:
       - evolution_db:/bot/evolution_db
       - evolution_instances:/evolution/instances
       - evolution_store:/evolution/store
+    healthcheck:
+      # Verifica se a Evolution API está aceitando conexões HTTP
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/',function(r){process.exit(r.statusCode<500?0:1)}).on('error',function(){process.exit(1)})\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - bot_network
 
@@ -94,6 +116,16 @@ services:
       - bot_network
     volumes:
       - bot_postgres_data:/var/lib/postgresql/data
+    # Healthcheck: garante que o postgres está aceitando conexões antes
+    # de permitir que Evolution API e bot_api iniciem.
+    # Se o postgres reiniciar, os dependentes (restart: always) reiniciam
+    # e aguardam o postgres ficar saudável novamente antes de conectar.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot_user -d evolution_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 networks:
   bot_network:
