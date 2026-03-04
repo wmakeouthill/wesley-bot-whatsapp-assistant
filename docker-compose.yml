@@ -2,13 +2,15 @@ version: "3.8"
 
 services:
   api:
+    # Imagem pré-buildada no GitHub Actions (GHCR)
+    # Local dev: docker compose up --build  (usa o Dockerfile)
+    # VPS prod:  docker compose pull api && docker compose up -d --no-build
+    image: ghcr.io/wmakeouthill/wesley-bot-whatsapp-assistant:latest
     build: .
     container_name: bot_api
     restart: always
     ports:
       - "8000:8000"
-    volumes:
-      - .:/app
     env_file:
       - .env
     environment:
@@ -24,7 +26,11 @@ services:
       bot_postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)\" 2>/dev/null || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/health'', timeout=5)" 2>/dev/null || exit 1',
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -88,7 +94,11 @@ services:
       - evolution_store:/evolution/store
     healthcheck:
       # Verifica se a Evolution API está aceitando conexões HTTP
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/',function(r){process.exit(r.statusCode<500?0:1)}).on('error',function(){process.exit(1)})\""]
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "require(''http'').get(''http://localhost:8080/'',function(r){process.exit(r.statusCode<500?0:1)}).on(''error'',function(){process.exit(1)})"',
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

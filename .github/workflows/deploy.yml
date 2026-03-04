@@ -1,16 +1,69 @@
-name: Deploy Oracle VPS Seguro
+name: Build GHCR + Deploy Oracle VPS
+
 on:
   push:
     branches:
       - main
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}  # wmakeouthill/wesley-bot-whatsapp-assistant
+
+# ──────────────────────────────────────────────────────────────────────
+# Job 1 — Build & Push
+#   Roda nos runners do GitHub (2-4 vCPU, 7GB RAM, SSD).
+#   Toda a parte pesada (Poetry export, pip install faiss-cpu, etc.)
+#   acontece AQUI e não na VPS.
+# ──────────────────────────────────────────────────────────────────────
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Login no GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push para GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # Apenas :latest — sem tag SHA para não acumular imagens antigas
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          # Cache de layers entre runs — reutiliza pip install quando
+          # pyproject.toml/poetry.lock não mudou (economia de ~3-5 min)
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Limpar imagens antigas do GHCR (manter apenas :latest)
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: wesley-bot-whatsapp-assistant
+          package-type: container
+          min-versions-to-keep: 1
+          delete-only-untagged-versions: true
+
+  # ──────────────────────────────────────────────────────────────────
+  # Job 2 — Deploy na VPS
+  #   Só roda DEPOIS do build ter sucesso.
+  #   A VPS apenas faz: docker pull (imagem pronta) → compose up.
+  #   Sem build pesado, sem pip install, sem Poetry na VPS.
+  # ──────────────────────────────────────────────────────────────────
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
       - name: Instalar OCI CLI (Oracle Cloud Infrastructure CLI)
         run: |
           python -m pip install --upgrade pip
@@ -70,28 +123,26 @@ jobs:
           echo "✅ Porta 22 destrancada na Oracle! Aguardando 15s..."
           sleep 15
 
-      - name: Executando Deploy Automático via SSH
+      - name: Deploy via SSH (pull da imagem pronta + compose up)
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.ORACLE_HOST }}
           username: ${{ secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_KEY }}
           script: |
-            echo "Iniciando Pipeline de Deploy Seguro..."
+            echo "Iniciando Pipeline de Deploy (imagem pré-buildada no GHCR)..."
 
-            # Se a VM Ubuntu estiver 100% crua, o Github Actions instala tudo sozinho agora:
+            # ── Bootstrap: instala Docker se a VM estiver crua ─────────────
             if ! command -v docker &> /dev/null; then
               echo "Instalando Docker e ferramentas básicas do zero..."
               sudo apt-get update
               sudo apt-get install -y git docker.io docker-compose-v2 socat
               sudo systemctl enable --now docker
               sudo usermod -aG docker ${{ secrets.ORACLE_USER }}
-              
-              # Tenta aplicar os grupos
               newgrp docker || true
             fi
 
-            # Cloudflare WARP — necessário para que o Baileys (WhatsApp) funcione em IPs de data center
+            # ── Bootstrap: Cloudflare WARP (Baileys precisa em IP de DC) ───
             if ! command -v warp-cli &> /dev/null; then
               echo "Instalando Cloudflare WARP + redsocks..."
               curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
@@ -104,17 +155,14 @@ jobs:
               warp-cli --accept-tos mode proxy
               warp-cli --accept-tos connect
 
-              # Relay socat: expõe o proxy SOCKS5 do WARP para a rede Docker (172.18.0.1:40000)
               printf '[Unit]\nDescription=SOCKS5 relay WARP proxy para Docker network\nAfter=warp-svc.service network.target\nWants=warp-svc.service\n\n[Service]\nType=simple\nExecStart=/usr/bin/socat TCP-LISTEN:40000,fork,bind=172.18.0.1 TCP:127.0.0.1:40000\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/warp-socat-relay.service > /dev/null
 
               printf '[Unit]\nDescription=Conecta Cloudflare WARP no boot\nAfter=warp-svc.service network-online.target\nWants=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/warp-cli --accept-tos connect\nRemainAfterExit=yes\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/warp-connect.service > /dev/null
 
-              # redsocks: proxy transparente SOCKS5 para containers Docker
               printf 'base {\n    log_debug = off;\n    log_info = on;\n    log = "stderr";\n    daemon = off;\n    redirector = iptables;\n}\nredsocks {\n    local_ip = 0.0.0.0;\n    local_port = 12345;\n    ip = 127.0.0.1;\n    port = 40000;\n    type = socks5;\n}\n' | sudo tee /etc/redsocks.conf > /dev/null
 
               printf '[Unit]\nDescription=RedSocks SOCKS5 Transparent Proxy (via WARP)\nAfter=network.target warp-svc.service\nWants=warp-svc.service\n\n[Service]\nType=simple\nExecStart=/usr/sbin/redsocks -c /etc/redsocks.conf\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/redsocks.service > /dev/null
 
-              # Script iptables para rotear todo TCP do Docker bot_network pelo redsocks -> WARP
               printf '#!/bin/bash\niptables -t nat -D PREROUTING -s 172.18.0.0/16 -p tcp -j DOCKER_WARP 2>/dev/null || true\niptables -t nat -F DOCKER_WARP 2>/dev/null || true\niptables -t nat -X DOCKER_WARP 2>/dev/null || true\niptables -t nat -N DOCKER_WARP\niptables -t nat -A DOCKER_WARP -d 0.0.0.0/8 -j RETURN\niptables -t nat -A DOCKER_WARP -d 10.0.0.0/8 -j RETURN\niptables -t nat -A DOCKER_WARP -d 100.64.0.0/10 -j RETURN\niptables -t nat -A DOCKER_WARP -d 127.0.0.0/8 -j RETURN\niptables -t nat -A DOCKER_WARP -d 169.254.0.0/16 -j RETURN\niptables -t nat -A DOCKER_WARP -d 172.16.0.0/12 -j RETURN\niptables -t nat -A DOCKER_WARP -d 192.168.0.0/16 -j RETURN\niptables -t nat -A DOCKER_WARP -d 224.0.0.0/4 -j RETURN\niptables -t nat -A DOCKER_WARP -d 240.0.0.0/4 -j RETURN\niptables -t nat -A DOCKER_WARP -p tcp -j REDIRECT --to-ports 12345\niptables -t nat -A PREROUTING -s 172.18.0.0/16 -p tcp -j DOCKER_WARP\necho "iptables WARP rules applied"\n' | sudo tee /usr/local/bin/setup-warp-iptables.sh > /dev/null
               sudo chmod +x /usr/local/bin/setup-warp-iptables.sh
 
@@ -140,6 +188,7 @@ jobs:
             warp-cli --accept-tos connect || true
             sudo systemctl start warp-socat-relay.service || true
 
+            # ── Git pull (apenas para docker-compose.yml + configs) ────────
             if [ ! -d "/home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant" ]; then
               git clone https://github.com/${{ github.repository }}.git /home/${{ secrets.ORACLE_USER }}/wesley-bot-whatsapp-assistant
             fi
@@ -150,7 +199,7 @@ jobs:
             git reset --hard origin/main
             git pull origin main
 
-            # Recria as envs pra IA
+            # Recria .env com segredos
             echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
             echo "EVOLUTION_API_KEY=${{ secrets.EVOLUTION_API_KEY }}" >> .env
             echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> .env
@@ -159,42 +208,43 @@ jobs:
             echo "EVOLUTION_INSTANCE_TWO_NAME=${{ secrets.EVOLUTION_INSTANCE_TWO_NAME }}" >> .env
             echo "INSTANCE_TWO_OWNER_JID=${{ secrets.INSTANCE_TWO_OWNER_JID }}" >> .env
 
-            # Apaga índice FAISS antigo para forçar rebuild com todos os markdowns (projects/ incluído)
-            rm -f vector_store.faiss vector_metadata.pkl
-
-            # Recarrega Máquinas
+            # ── Para containers atuais ─────────────────────────────────────
             sudo docker compose down || docker compose down
 
-            # -------------------------------------------------------------------
-            # Limpeza Docker: garante que apenas a imagem atual existe na VPS.
-            # Executado APÓS o compose down (nenhum container em uso) e ANTES
-            # do build, para que o --build parta de uma base limpa.
-            # -------------------------------------------------------------------
+            # ── Login no GHCR para puxar imagem privada ────────────────────
+            echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # 1) Remove a imagem buildada do serviço 'api' (rebuilt a cada deploy)
-            #    "docker compose images -q api" retorna o Image ID atual, se existir
-            sudo docker compose images -q api 2>/dev/null \
-              | xargs --no-run-if-empty sudo docker rmi --force 2>/dev/null || true
+            # ── Pull da imagem pré-buildada (segundos, não minutos) ────────
+            sudo docker compose pull api
+            sudo docker compose pull evolution-api || true
 
-            # 2) Remove camadas órfãs (dangling layers de builds anteriores sem tag)
+            # ── Sobe containers (SEM build — imagem já veio pronta) ────────
+            sudo docker compose up -d --no-build
+
+            # ── Logout do registry (token efêmero, não precisa ficar) ──────
+            sudo docker logout ghcr.io 2>/dev/null || true
+
+            # ---------------------------------------------------------------
+            # Limpeza Docker: mantém APENAS a imagem :latest que acabou de
+            # chegar. Remove tudo que sobrou de deploys anteriores.
+            # ---------------------------------------------------------------
+
+            # 1) Imagens dangling (layers sem tag de builds/pulls antigos)
             sudo docker image prune --force 2>/dev/null || true
 
-            # 3) Remove apenas cache de build SEM REFERÊNCIA (dangling build cache).
-            #    NÃO usa --all: preserva o cache das camadas de pip install (requirements.txt),
-            #    que são caras de reconstruir (~300MB de deps, faiss-cpu, etc.) e não mudam
-            #    a cada deploy. Sem --all, Docker reutiliza a camada de deps quando o
-            #    pyproject.toml/poetry.lock não mudou, tornando o build muito mais rápido
-            #    e evitando OOM em VPS de 1GB durante pip install completo.
-            sudo docker builder prune --force 2>/dev/null || true
+            # 2) Build cache completo (não precisa mais — build é no Actions)
+            sudo docker builder prune --all --force 2>/dev/null || true
 
-            echo "🧹 Limpeza Docker concluída."
+            # 3) Volumes órfãos (NÃO remove volumes nomeados como postgres_data)
+            sudo docker volume prune --force 2>/dev/null || true
 
-            # Força pull da imagem evoapicloud (v2.3.7+) antes de subir
-            sudo docker compose pull evolution-api || docker compose pull evolution-api || true
-            sudo docker compose up -d --build || docker compose up -d --build
+            echo "🧹 Limpeza Docker concluída — apenas imagens em uso mantidas."
 
-            # Falha o deploy se os containers não subirem (evita "sucesso" falso)
-            sleep 5
+            # ── Aguarda healthchecks ───────────────────────────────────────
+            echo "Aguardando containers iniciarem (healthcheck depends_on)..."
+            sleep 60
+
+            # Falha o deploy se os containers não subirem
             RUNNING=$(sudo docker compose ps -a --status running -q 2>/dev/null | wc -l)
             if [ "$RUNNING" -lt 3 ]; then
               echo "ERRO: Containers nao estao rodando apos o deploy (running=$RUNNING)."
@@ -203,13 +253,13 @@ jobs:
               exit 1
             fi
 
-            # Garante que WARP e redsocks estao rodando apos o deploy
+            # Garante WARP/redsocks rodando após compose up
             sudo systemctl start warp-svc || true
             warp-cli --accept-tos connect || true
             sudo systemctl start redsocks.service || true
             sudo systemctl start warp-socat-relay.service || true
 
-            # Aplica regras iptables (recriam-se apos docker compose down/up que pode resetar chains)
+            # Aplica regras iptables (compose down/up pode resetar chains)
             bash /usr/local/bin/setup-warp-iptables.sh || true
 
             echo "Pipeline Concluído com Sucesso! 🚀"
