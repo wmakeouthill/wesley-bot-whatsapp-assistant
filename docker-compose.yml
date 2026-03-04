@@ -122,9 +122,9 @@ services:
     # e aguardam o postgres ficar saudável novamente antes de conectar.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bot_user -d evolution_db"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 10s
 
 networks:

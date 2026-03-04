@@ -179,10 +179,13 @@ jobs:
             # 2) Remove camadas órfãs (dangling layers de builds anteriores sem tag)
             sudo docker image prune --force 2>/dev/null || true
 
-            # 3) Limpa TODO o cache do BuildKit — maior ganho de espaço em disco
-            #    O próximo build baixa/reusa camadas via registry (layer cache do Docker Hub),
-            #    mas não gasta disco local com cache acumulado de deploys antigos.
-            sudo docker builder prune --all --force 2>/dev/null || true
+            # 3) Remove apenas cache de build SEM REFERÊNCIA (dangling build cache).
+            #    NÃO usa --all: preserva o cache das camadas de pip install (requirements.txt),
+            #    que são caras de reconstruir (~300MB de deps, faiss-cpu, etc.) e não mudam
+            #    a cada deploy. Sem --all, Docker reutiliza a camada de deps quando o
+            #    pyproject.toml/poetry.lock não mudou, tornando o build muito mais rápido
+            #    e evitando OOM em VPS de 1GB durante pip install completo.
+            sudo docker builder prune --force 2>/dev/null || true
 
             echo "🧹 Limpeza Docker concluída."
 
