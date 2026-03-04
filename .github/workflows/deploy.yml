@@ -123,8 +123,8 @@ jobs:
           NEW_RULES=$(echo "$RULES" | jq ". + [$NEW_RULE]")
 
           oci network security-list update --security-list-id "$SL_OCID" --ingress-security-rules "$NEW_RULES" --force --auth api_key
-          echo "✅ Porta 22 destrancada na Oracle! Aguardando 15s..."
-          sleep 15
+          echo "✅ Porta 22 destrancada na Oracle! Aguardando 30s para propagar..."
+          sleep 30
 
       - name: Deploy via SSH (pull da imagem pronta + compose up)
         uses: appleboy/ssh-action@master
@@ -132,6 +132,8 @@ jobs:
           host: ${{ secrets.ORACLE_HOST }}
           username: ${{ secrets.ORACLE_USER }}
           key: ${{ secrets.ORACLE_SSH_KEY }}
+          command_timeout: 20m
+          timeout: 60s
           script: |
             echo "Iniciando Pipeline de Deploy (imagem pré-buildada no GHCR)..."
 
