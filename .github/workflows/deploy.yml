@@ -36,7 +36,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.CR_PAT }}
 
       - name: Setup Docker Buildx (driver docker-container p/ cache GHA)
         uses: docker/setup-buildx-action@v3
@@ -53,6 +53,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verificar que a imagem foi publicada
+        run: |
+          echo "Verificando imagem no GHCR..."
+          docker pull ghcr.io/${{ steps.image.outputs.name }}:latest
+          echo "✅ Imagem verificada com sucesso no GHCR!"
+
       - name: Limpar imagens antigas do GHCR (manter apenas :latest)
         uses: actions/delete-package-versions@v5
         with:
@@ -60,6 +66,7 @@ jobs:
           package-type: container
           min-versions-to-keep: 1
           delete-only-untagged-versions: true
+          token: ${{ secrets.CR_PAT }}
 
   # ──────────────────────────────────────────────────────────────────
   # Job 2 — Deploy na VPS
@@ -225,7 +232,7 @@ jobs:
             sudo docker compose down || docker compose down
 
             # ── Login no GHCR para puxar imagem privada ────────────────────
-            echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo "${{ secrets.CR_PAT }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
             if [ $? -ne 0 ]; then
               echo "❌ ERRO: Falha no login GHCR!"
               exit 1
