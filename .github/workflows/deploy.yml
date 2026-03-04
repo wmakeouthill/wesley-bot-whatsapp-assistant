@@ -65,6 +65,9 @@ jobs:
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Instalar OCI CLI (Oracle Cloud Infrastructure CLI)
@@ -218,13 +221,29 @@ jobs:
 
             # ── Login no GHCR para puxar imagem privada ────────────────────
             echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            if [ $? -ne 0 ]; then
+              echo "❌ ERRO: Falha no login GHCR!"
+              exit 1
+            fi
+            echo "✅ Login GHCR OK"
 
             # ── Pull da imagem pré-buildada (segundos, não minutos) ────────
-            sudo docker compose pull api
+            echo "Puxando imagem ghcr.io/wmakeouthill/wesley-bot-whatsapp-assistant:latest..."
+            if ! sudo docker compose pull api; then
+              echo "❌ ERRO: Falha ao puxar imagem do GHCR! Verificar permissões do pacote."
+              echo "Tentando pull direto como fallback..."
+              if ! sudo docker pull ghcr.io/wmakeouthill/wesley-bot-whatsapp-assistant:latest; then
+                echo "❌ ERRO: Pull direto também falhou. Abortando deploy."
+                exit 1
+              fi
+            fi
+            echo "✅ Imagem API puxada com sucesso"
+
             sudo docker compose pull evolution-api || true
 
             # ── Sobe containers (SEM build — imagem já veio pronta) ────────
             sudo docker compose up -d --no-build
+            echo "✅ docker compose up executado"
 
             # ── Logout do registry (token efêmero, não precisa ficar) ──────
             sudo docker logout ghcr.io 2>/dev/null || true
@@ -247,14 +266,32 @@ jobs:
 
             # ── Aguarda healthchecks ───────────────────────────────────────
             echo "Aguardando containers iniciarem (healthcheck depends_on)..."
-            sleep 60
+
+            # Espera até 120s verificando a cada 15s
+            MAX_WAIT=120
+            ELAPSED=0
+            while [ $ELAPSED -lt $MAX_WAIT ]; do
+              sleep 15
+              ELAPSED=$((ELAPSED + 15))
+              RUNNING=$(sudo docker compose ps -a --status running -q 2>/dev/null | wc -l)
+              echo "  [$ELAPSED/${MAX_WAIT}s] containers running: $RUNNING"
+              if [ "$RUNNING" -ge 3 ]; then
+                echo "✅ Todos os containers estão rodando!"
+                break
+              fi
+            done
 
             # Falha o deploy se os containers não subirem
             RUNNING=$(sudo docker compose ps -a --status running -q 2>/dev/null | wc -l)
             if [ "$RUNNING" -lt 3 ]; then
-              echo "ERRO: Containers nao estao rodando apos o deploy (running=$RUNNING)."
+              echo "❌ ERRO: Containers nao estao rodando apos ${MAX_WAIT}s (running=$RUNNING)."
               sudo docker compose ps -a
+              echo "--- Logs api ---"
               sudo docker compose logs --tail 80 api 2>/dev/null || true
+              echo "--- Logs evolution-api ---"
+              sudo docker compose logs --tail 40 evolution-api 2>/dev/null || true
+              echo "--- Logs postgres ---"
+              sudo docker compose logs --tail 20 bot_postgres 2>/dev/null || true
               exit 1
             fi
 
