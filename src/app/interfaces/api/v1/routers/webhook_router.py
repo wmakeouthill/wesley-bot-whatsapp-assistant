@@ -20,6 +20,58 @@ router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 MAX_CONCURRENT_WEBHOOKS = 10
 _webhook_semaphore = asyncio.Semaphore(MAX_CONCURRENT_WEBHOOKS)
 
+# ---------------------------------------------------------------------------
+# Guard de reconexão: evita disparar múltiplas reconexões simultâneas
+# para a mesma instância quando chega rafaga de CONNECTION_UPDATE.
+# ---------------------------------------------------------------------------
+_reconnecting: set[str] = set()
+
+
+async def _reconectar_por_evento(client: EvolutionClient, nome: str) -> None:
+    """
+    Reconecta imediatamente ao receber CONNECTION_UPDATE com state=close/connecting.
+    Usa guard para evitar reconexões paralelas da mesma instância.
+    """
+    if nome in _reconnecting:
+        logger.info(f"[ConexãoEvento] {nome}: reconexão já em andamento, ignorando duplicata.")
+        return
+
+    _reconnecting.add(nome)
+    try:
+        logger.warning(f"[ConexãoEvento] {nome}: desconexão detectada via webhook. Reconectando...")
+        await asyncio.sleep(5)  # Aguarda Baileys estabilizar antes de solicitar conexão
+
+        for attempt in range(1, 4):
+            try:
+                result = await client.connect_instance()
+                if result.get("base64"):
+                    logger.critical(
+                        f"[ConexãoEvento] {nome}: sessão WhatsApp EXPIRADA — novo QR necessário! "
+                        f"Acesse /whatsapp/conectar ou o painel para escanear."
+                    )
+                    return
+            except Exception as e:
+                logger.error(f"[ConexãoEvento] {nome}: erro na tentativa {attempt}: {e}")
+
+            await asyncio.sleep(20)
+
+            try:
+                data = await client.connection_state()
+                state = data.get("instance", {}).get("state", "unknown")
+                if state == "open":
+                    logger.info(f"[ConexãoEvento] {nome}: reconectado com sucesso ✓")
+                    return
+                logger.warning(f"[ConexãoEvento] {nome}: estado '{state}' após tentativa {attempt}.")
+            except Exception as e:
+                logger.error(f"[ConexãoEvento] {nome}: erro ao verificar estado: {e}")
+
+            if attempt < 3:
+                await asyncio.sleep(20 * attempt)
+
+        logger.error(f"[ConexãoEvento] {nome}: falhou após 3 tentativas. Watchdog continuará monitorando.")
+    finally:
+        _reconnecting.discard(nome)
+
 
 async def _processar_com_limite(
     service: AtendimentoService, body: WebhookBody, client: EvolutionClient
@@ -68,10 +120,33 @@ async def receive_evolution_webhook(
         logger.info(f"Webhook sem 'event' ignorado. Keys: {list(payload.keys())}")
         return {"status": "ignored"}
 
-    logger.info(
-        f"Webhook recebido: event={payload.get('event')} instance={payload.get('instance')}"
-    )
+    event = payload.get("event", "")
+    instance_name = payload.get("instance", "")
+
+    logger.info(f"Webhook recebido: event={event} instance={instance_name}")
     logger.info(f"PAYLOAD: {json.dumps(payload, ensure_ascii=False, default=str)[:2000]}")
+
+    # -----------------------------------------------------------------------
+    # Tratamento prioritário: connection.update — reconecta imediatamente
+    # sem tentar parsear como WebhookBody (schema diferente).
+    # -----------------------------------------------------------------------
+    if event == "connection.update":
+        state = payload.get("data", {}).get("state", "")
+        logger.info(f"[ConnectionUpdate] {instance_name}: state={state}")
+
+        if state in ("close", "connecting"):
+            if (
+                evolution_client_2 is not None
+                and instance_name == settings.evolution_instance_two_name
+            ):
+                target_client = evolution_client_2
+            else:
+                target_client = evolution_client_1
+
+            if state == "close":
+                background_tasks.add_task(_reconectar_por_evento, target_client, instance_name)
+
+        return {"status": "ok"}
 
     try:
         body = WebhookBody(**payload)

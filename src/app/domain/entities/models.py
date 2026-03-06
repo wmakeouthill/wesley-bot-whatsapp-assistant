@@ -5,12 +5,13 @@ from app.infrastructure.database.base import Base
 
 class Cliente(Base):
     __tablename__ = "bot_clientes"
-    
+
     id = Column(String(36), primary_key=True)
     whatsapp_id = Column(String(50), unique=True, nullable=False, index=True) # Ex: 5511999999999@s.whatsapp.net
     nome = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+    oculta = Column(Boolean, default=False, nullable=False, server_default="false")
+
     # Historico do cliente
     mensagens = relationship("Mensagem", back_populates="cliente", cascade="all, delete-orphan")
 

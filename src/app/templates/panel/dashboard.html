@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Painel — Bot Admin</title>
-    <link rel="stylesheet" href="/static/panel/panel.css?v=2">
+    <link rel="stylesheet" href="/static/panel/panel.css?v=3">
 </head>
 
 <body>
@@ -97,6 +97,10 @@
                         </select>
                         <input type="search" id="conversas-search" placeholder="Pesquisar por número ou nome..."
                             class="conversas-search-input" aria-label="Pesquisar conversas por número ou nome">
+                        <button id="btn-show-hidden" class="btn-show-hidden"
+                            onclick="toggleShowHidden()" title="Exibir arquivados">
+                            👁 Exibir arquivados
+                        </button>
                     </div>
                 </div>
 
@@ -112,7 +116,7 @@
                 <!-- Tabela de conversas -->
                 <div class="table-wrap conversas-table-wrap">
                     <div class="table-header">
-                        <h3>Todas as conversas</h3>
+                        <h3 id="conversas-table-title">Todas as conversas</h3>
                     </div>
                     <table>
                         <thead>
@@ -204,7 +208,7 @@
     <!-- ── Toast ── -->
     <div class="toast" id="toast"></div>
 
-    <script src="/static/panel/panel.js?v=2"></script>
+    <script src="/static/panel/panel.js?v=3"></script>
     <script>
         // Popula o seletor de instâncias no load
         async function initInstSelect() {

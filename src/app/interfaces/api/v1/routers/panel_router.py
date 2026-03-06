@@ -59,6 +59,9 @@ class ResetarChatRequest(BaseModel):
     instancia: str
     chat_jid: str
 
+class OcultarConversaRequest(BaseModel):
+    oculta: bool
+
 
 # ===========================================================================
 # PÁGINAS HTML
@@ -159,15 +162,22 @@ async def panel_conversations(
     page: int = 1,
     per_page: int = 10,
     search: Optional[str] = None,
+    show_hidden: bool = False,
     current_user: str = Depends(get_current_user),
 ):
-    """Lista de conversas com paginação (10 por página), pesquisa por número/nome e status de IA por instância."""
+    """Lista de conversas com paginação (10 por página), pesquisa por número/nome e status de IA por instância.
+    Por padrão oculta conversas arquivadas; passe show_hidden=true para exibi-las."""
     offset = (page - 1) * per_page
 
     async with async_session() as session:
-        # Base: todos os clientes (com filtro opcional por nome/número)
+        # Base: filtra ocultas por padrão
         base_stmt = select(Cliente)
         count_stmt = select(func.count(Cliente.id))
+
+        if not show_hidden:
+            base_stmt = base_stmt.where(Cliente.oculta == False)
+            count_stmt = count_stmt.where(Cliente.oculta == False)
+
         if search and search.strip():
             termo = f"%{search.strip()}%"
             filtro = or_(
@@ -253,6 +263,7 @@ async def panel_conversations(
             "numero": num,
             "nome": cliente.nome or "Desconhecido",
             "ia_ativa": ia_ativa,
+            "oculta": bool(cliente.oculta),
             "ultima_mensagem": last.texto[:80] if last else None,
             "ultima_mensagem_direcao": last.direcao if last else None,
             "ultima_mensagem_dt": ultima_msg_dt.isoformat() if ultima_msg_dt else None,
@@ -524,3 +535,45 @@ async def panel_instance_connect(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===========================================================================
+# API REST — arquivar / excluir conversas
+# ===========================================================================
+
+@router.patch("/api/panel/conversations/{cliente_id}/ocultar", tags=["Painel Admin"])
+async def panel_ocultar_conversa(
+    cliente_id: str,
+    body: OcultarConversaRequest,
+    current_user: str = Depends(get_current_user),
+):
+    """Arquiva (oculta) ou restaura uma conversa. Não apaga mensagens."""
+    async with async_session() as session:
+        result = await session.execute(select(Cliente).where(Cliente.id == cliente_id))
+        cliente = result.scalar_one_or_none()
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Conversa não encontrada")
+        cliente.oculta = body.oculta
+        await session.commit()
+
+    acao = "arquivada" if body.oculta else "restaurada"
+    logger.info("[PAINEL] Conversa %s %s por %s", cliente_id, acao, current_user)
+    return {"ok": True, "oculta": body.oculta}
+
+
+@router.delete("/api/panel/conversations/{cliente_id}", tags=["Painel Admin"])
+async def panel_excluir_conversa(
+    cliente_id: str,
+    current_user: str = Depends(get_current_user),
+):
+    """Exclui permanentemente uma conversa e todas as suas mensagens."""
+    async with async_session() as session:
+        result = await session.execute(select(Cliente).where(Cliente.id == cliente_id))
+        cliente = result.scalar_one_or_none()
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Conversa não encontrada")
+        await session.delete(cliente)
+        await session.commit()
+
+    logger.info("[PAINEL] Conversa %s EXCLUÍDA por %s", cliente_id, current_user)
+    return {"ok": True}

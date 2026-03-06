@@ -160,6 +160,21 @@ class EvolutionClient:
                         continue
                     raise
 
+    async def restart_instance(self) -> Dict[str, Any]:
+        """Reinicia a conexão Baileys sem deletar a sessão (resolve ghost connections)."""
+        url = f"{self.base_url}/instance/restart/{self.instance_name}"
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.put(url, headers=self.headers)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Erro ao reiniciar instância: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Erro ao reiniciar instância: {str(e)}")
+            raise
+
     async def set_webhook(self) -> Dict[str, Any]:
         """Configura ou atualiza o webhook da instância no Evolution API"""
         payload = {

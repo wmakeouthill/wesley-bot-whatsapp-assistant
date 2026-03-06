@@ -81,11 +81,13 @@ services:
       - WA_SESSION_ID=wesley_bot_session
       - DEL_INSTANCE=false
       - ALWAYS_ONLINE=true
-      - QRCODE_LIMIT=30
-      - QRCODE_EXPIRATION_IN_SECONDS=45
-      # Versão do WhatsApp Web para Baileys (vazio = busca automaticamente do GitHub)
-      # Valor default da imagem 2.3000.1015901307 é antigo e rejeitado pelo WhatsApp
-      - CONFIG_SESSION_PHONE_VERSION=
+      - QRCODE_LIMIT=50
+      - QRCODE_EXPIRATION_IN_SECONDS=60
+      # Versão do WhatsApp Web para Baileys.
+      # Deixar vazio = busca do GitHub a cada startup (pode falhar se GitHub indisponível).
+      # Fixar versão garante reconexões confiáveis mesmo sem internet no momento.
+      # Para atualizar: verificar https://web.whatsapp.com/check-update?version=1&platform=web
+      - CONFIG_SESSION_PHONE_VERSION=2.3000.1023179
     volumes:
       - evolution_db:/bot/evolution_db
       - evolution_instances:/evolution/instances

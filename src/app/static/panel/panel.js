@@ -1,6 +1,7 @@
 /* ------------------- State ------------------- */
 let currentPage = 1;
 let conversaJid = null;
+let showHidden = false;  // toggle "exibir ocultos"
 
 /* ------------------- Boot ------------------- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -101,6 +102,7 @@ async function loadConversas(page = 1) {
     instancia,
     page: String(page),
     per_page: '10',
+    show_hidden: String(showHidden),
   });
   if (conversasSearchTerm.trim()) {
     params.set('search', conversasSearchTerm.trim());
@@ -117,11 +119,15 @@ async function loadConversas(page = 1) {
     const dt = c.ultima_mensagem_dt ? new Date(c.ultima_mensagem_dt + 'Z').toLocaleString('pt-BR') : '—';
     const preview = (c.ultima_mensagem || '').substring(0, 55) + (c.ultima_mensagem && c.ultima_mensagem.length > 55 ? '...' : '');
     const jidEnc = c.whatsapp_id.replace(/@/g, '__at__');
+    const ocultaLabel = c.oculta ? '👁 Exibir' : '📦 Arquivar';
+    const ocultaTitle = c.oculta ? 'Restaurar conversa' : 'Arquivar (ocultar da lista)';
+    const rowClass = c.oculta ? 'conversa-row conversa-oculta' : 'conversa-row';
     return `
-      <tr class="conversa-row">
+      <tr class="${rowClass}">
         <td data-label="Contato">
-          <strong>${escHtml(c.nome)}</strong><br>
-          <small style="color:var(--text-muted)">${c.numero}</small>
+          <strong>${escHtml(c.nome)}</strong>
+          ${c.oculta ? '<span class="badge-arquivado">Arquivado</span>' : ''}
+          <br><small style="color:var(--text-muted)">${c.numero}</small>
         </td>
         <td data-label="Última mensagem" class="conversa-preview">
           ${escHtml(preview) || '—'}
@@ -133,11 +139,14 @@ async function loadConversas(page = 1) {
             <span class="toggle-slider"></span>
           </label>
         </td>
-        <td data-label="Ações">
-          <button onclick="verHistorico('${jidEnc}', '${escHtml(c.nome)}')" 
-                  class="btn-histórico">
-            Histórico
-          </button>
+        <td data-label="Ações" class="acoes-cell">
+          <button onclick="verHistorico('${jidEnc}', '${escHtml(c.nome)}')"
+                  class="btn-histórico" title="Ver histórico">💬</button>
+          <button onclick="toggleArquivar('${c.id}', ${c.oculta})"
+                  class="btn-arquivar ${c.oculta ? 'btn-restaurar' : ''}"
+                  title="${ocultaTitle}">${ocultaLabel}</button>
+          <button onclick="excluirConversa('${c.id}', '${escHtml(c.nome)}')"
+                  class="btn-excluir" title="Excluir conversa e histórico">🗑</button>
         </td>
       </tr>`;
   }).join('');
@@ -173,6 +182,42 @@ async function toggleIA(instancia, chatJid, ativo) {
   const ok = await api('POST', '/api/panel/ia/toggle', { instancia, chat_jid: chatJid, ia_ativa: ativo });
   if (ok) toast(ativo ? '✅ IA ativada' : '🔴 IA desativada');
   else toast('Erro ao alterar IA', 'red');
+}
+
+/* ------------------- Toggle show hidden ------------------- */
+function toggleShowHidden() {
+  showHidden = !showHidden;
+  const btn = document.getElementById('btn-show-hidden');
+  if (btn) {
+    btn.classList.toggle('ativo', showHidden);
+    btn.title = showHidden ? 'Ocultar arquivados' : 'Exibir arquivados';
+    btn.textContent = showHidden ? '👁 Ocultar arquivados' : '👁 Exibir arquivados';
+  }
+  loadConversas(1);
+}
+
+/* ------------------- Arquivar / Excluir ------------------- */
+async function toggleArquivar(clienteId, ocultoAtual) {
+  const novoEstado = !ocultoAtual;
+  const ok = await api('PATCH', `/api/panel/conversations/${clienteId}/ocultar`, { oculta: novoEstado });
+  if (ok) {
+    toast(novoEstado ? '📦 Conversa arquivada' : '✅ Conversa restaurada');
+    loadConversas(currentPage);
+  } else {
+    toast('Erro ao arquivar conversa', 'red');
+  }
+}
+
+async function excluirConversa(clienteId, nome) {
+  const confirmado = confirm(`Excluir conversa de "${nome}" permanentemente?\n\nTodo o histórico de mensagens será apagado e não poderá ser recuperado.`);
+  if (!confirmado) return;
+  const ok = await api('DELETE', `/api/panel/conversations/${clienteId}`);
+  if (ok) {
+    toast('🗑 Conversa excluída');
+    loadConversas(currentPage);
+  } else {
+    toast('Erro ao excluir conversa', 'red');
+  }
 }
 
 /* ------------------- Histórico ------------------- */

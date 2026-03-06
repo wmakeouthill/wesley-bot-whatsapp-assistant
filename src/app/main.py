@@ -23,6 +23,13 @@ _RECONNECT_CHECK_DELAY = 20
 # Máximo de tentativas de reconexão antes de desistir e logar alerta crítico
 _MAX_RECONNECT_ATTEMPTS = 3
 
+# Ciclos consecutivos com state="open" antes de forçar restart para detectar ghost connections.
+# 12 ciclos × 5 min = 60 min → reinicia Baileys a cada hora como heartbeat.
+_GHOST_RESTART_CYCLES = 12
+
+# Contador de ciclos "open" por instância (chave: nome da instância)
+_open_cycles: dict[str, int] = {}
+
 
 async def _tentar_reconectar(client, nome: str) -> bool:
     """
@@ -92,7 +99,12 @@ async def _tentar_reconectar(client, nome: str) -> bool:
 async def _watchdog():
     """
     Monitora o estado de conexão WhatsApp de cada instância a cada 5 minutos.
-    Se desconectada, delega para _tentar_reconectar() com retry inteligente.
+
+    Dois modos de atuação:
+    1. State != "open": delega para _tentar_reconectar() com retry inteligente.
+    2. State == "open" por N ciclos consecutivos (_GHOST_RESTART_CYCLES): reinicia
+       o Baileys via restart_instance() para eliminar ghost connections (conexões
+       que parecem vivas mas o WebSocket subjacente está morto).
     """
     from app.infrastructure.external.evolution_client import EvolutionClient
 
@@ -112,8 +124,30 @@ async def _watchdog():
                     state = data.get("instance", {}).get("state", "unknown")
 
                     if state == "open":
-                        logger.info(f"[Watchdog] {nome}: conectado (open) ✓")
+                        _open_cycles[nome] = _open_cycles.get(nome, 0) + 1
+                        cycles = _open_cycles[nome]
+
+                        if cycles >= _GHOST_RESTART_CYCLES:
+                            # Heartbeat: reinicia Baileys para garantir que o WebSocket
+                            # está realmente vivo e não é uma ghost connection.
+                            logger.info(
+                                f"[Watchdog] {nome}: heartbeat — {cycles} ciclos 'open'. "
+                                f"Reiniciando Baileys para verificar conexão real..."
+                            )
+                            try:
+                                await client.restart_instance()
+                                _open_cycles[nome] = 0
+                                logger.info(f"[Watchdog] {nome}: restart preventivo concluído ✓")
+                            except Exception as e:
+                                logger.warning(f"[Watchdog] {nome}: falha no restart preventivo: {e}")
+                                _open_cycles[nome] = 0  # Reset para evitar loop de falhas
+                        else:
+                            logger.info(
+                                f"[Watchdog] {nome}: conectado (open) ✓ "
+                                f"[ciclo {cycles}/{_GHOST_RESTART_CYCLES}]"
+                            )
                     else:
+                        _open_cycles[nome] = 0  # Reset contador ao detectar desconexão
                         logger.warning(f"[Watchdog] {nome}: estado '{state}' detectado.")
                         await _tentar_reconectar(client, nome)
 
