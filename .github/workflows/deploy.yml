@@ -222,7 +222,6 @@ jobs:
 
             git fetch --all
             git reset --hard origin/main
-            git pull origin main
 
             # Recria .env com segredos
             echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
