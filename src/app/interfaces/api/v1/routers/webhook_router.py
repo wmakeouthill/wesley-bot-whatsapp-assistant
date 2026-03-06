@@ -14,61 +14,62 @@ router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 # ---------------------------------------------------------------------------
 # Controle de concorrência: evita acúmulo ilimitado de tasks em memória
 # sob flood de webhooks (muitas mensagens simultâneas).
-# MAX_CONCURRENT_WEBHOOKS = máximo de processar_webhook rodando ao mesmo tempo.
-# Webhooks extras aguardam no semáforo sem criar novas goroutines ilimitadas.
 # ---------------------------------------------------------------------------
 MAX_CONCURRENT_WEBHOOKS = 10
 _webhook_semaphore = asyncio.Semaphore(MAX_CONCURRENT_WEBHOOKS)
 
 # ---------------------------------------------------------------------------
-# Guard de reconexão: evita disparar múltiplas reconexões simultâneas
-# para a mesma instância quando chega rafaga de CONNECTION_UPDATE.
+# Guard de reconexão: evita reconexões paralelas para a mesma instância.
+# Compartilhado com o watchdog (main.py importa este set).
 # ---------------------------------------------------------------------------
 _reconnecting: set[str] = set()
 
 
 async def _reconectar_por_evento(client: EvolutionClient, nome: str) -> None:
     """
-    Reconecta imediatamente ao receber CONNECTION_UPDATE com state=close/connecting.
-    Usa guard para evitar reconexões paralelas da mesma instância.
+    Tenta uma reconexão imediata ao receber CONNECTION_UPDATE com state=close.
+
+    Faz apenas UMA tentativa — sem retry loop. O watchdog (main.py) é o
+    responsável por retentativas persistentes a cada 10 minutos. Essa função
+    serve apenas para recuperação rápida de quedas pontuais.
     """
     if nome in _reconnecting:
-        logger.info(f"[ConexãoEvento] {nome}: reconexão já em andamento, ignorando duplicata.")
+        logger.info(f"[ConexãoEvento] {nome}: reconexão já em andamento, ignorando.")
         return
 
     _reconnecting.add(nome)
     try:
-        logger.warning(f"[ConexãoEvento] {nome}: desconexão detectada via webhook. Reconectando...")
-        await asyncio.sleep(5)  # Aguarda Baileys estabilizar antes de solicitar conexão
+        logger.warning(f"[ConexãoEvento] {nome}: desconexão detectada via webhook. Tentando reconexão rápida...")
 
-        for attempt in range(1, 4):
-            try:
-                result = await client.connect_instance()
-                if result.get("base64"):
-                    logger.critical(
-                        f"[ConexãoEvento] {nome}: sessão WhatsApp EXPIRADA — novo QR necessário! "
-                        f"Acesse /whatsapp/conectar ou o painel para escanear."
-                    )
-                    return
-            except Exception as e:
-                logger.error(f"[ConexãoEvento] {nome}: erro na tentativa {attempt}: {e}")
+        # Aguarda o Baileys estabilizar antes de solicitar conexão
+        await asyncio.sleep(5)
 
-            await asyncio.sleep(20)
+        try:
+            result = await client.connect_instance()
+            if result.get("base64"):
+                logger.critical(
+                    f"[ConexãoEvento] {nome}: sessão WhatsApp EXPIRADA — QR Code necessário! "
+                    f"Acesse o painel para escanear o novo QR."
+                )
+                return
+        except Exception as e:
+            logger.error(f"[ConexãoEvento] {nome}: erro ao solicitar reconexão: {e}")
+            return
 
-            try:
-                data = await client.connection_state()
-                state = data.get("instance", {}).get("state", "unknown")
-                if state == "open":
-                    logger.info(f"[ConexãoEvento] {nome}: reconectado com sucesso ✓")
-                    return
-                logger.warning(f"[ConexãoEvento] {nome}: estado '{state}' após tentativa {attempt}.")
-            except Exception as e:
-                logger.error(f"[ConexãoEvento] {nome}: erro ao verificar estado: {e}")
-
-            if attempt < 3:
-                await asyncio.sleep(20 * attempt)
-
-        logger.error(f"[ConexãoEvento] {nome}: falhou após 3 tentativas. Watchdog continuará monitorando.")
+        # Verifica resultado após 15s
+        await asyncio.sleep(15)
+        try:
+            data = await client.connection_state()
+            state = data.get("instance", {}).get("state", "unknown")
+            if state == "open":
+                logger.info(f"[ConexãoEvento] {nome}: reconectado com sucesso ✓")
+            else:
+                logger.warning(
+                    f"[ConexãoEvento] {nome}: estado '{state}' após tentativa rápida. "
+                    f"Watchdog continuará monitorando a cada 10 min."
+                )
+        except Exception as e:
+            logger.error(f"[ConexãoEvento] {nome}: erro ao verificar estado: {e}")
     finally:
         _reconnecting.discard(nome)
 
@@ -134,7 +135,7 @@ async def receive_evolution_webhook(
         state = payload.get("data", {}).get("state", "")
         logger.info(f"[ConnectionUpdate] {instance_name}: state={state}")
 
-        if state in ("close", "connecting"):
+        if state == "close":
             if (
                 evolution_client_2 is not None
                 and instance_name == settings.evolution_instance_two_name
@@ -143,8 +144,7 @@ async def receive_evolution_webhook(
             else:
                 target_client = evolution_client_1
 
-            if state == "close":
-                background_tasks.add_task(_reconectar_por_evento, target_client, instance_name)
+            background_tasks.add_task(_reconectar_por_evento, target_client, instance_name)
 
         return {"status": "ok"}
 

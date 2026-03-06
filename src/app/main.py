@@ -1,6 +1,7 @@
 import logging
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -14,8 +15,8 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Intervalo do watchdog: verifica conexão WhatsApp a cada 5 minutos
-_WATCHDOG_INTERVAL_SECONDS = 5 * 60
+# Intervalo do watchdog: verifica conexão WhatsApp a cada 10 minutos
+_WATCHDOG_INTERVAL_SECONDS = 10 * 60
 
 # Segundos para aguardar o Baileys estabelecer conexão após connect_instance()
 _RECONNECT_CHECK_DELAY = 20
@@ -23,12 +24,11 @@ _RECONNECT_CHECK_DELAY = 20
 # Máximo de tentativas de reconexão antes de desistir e logar alerta crítico
 _MAX_RECONNECT_ATTEMPTS = 3
 
-# Ciclos consecutivos com state="open" antes de forçar restart para detectar ghost connections.
-# 12 ciclos × 5 min = 60 min → reinicia Baileys a cada hora como heartbeat.
-_GHOST_RESTART_CYCLES = 12
+# Mensagens com mais de N dias são deletadas na limpeza automática
+_CLEANUP_DAYS = 90
 
-# Contador de ciclos "open" por instância (chave: nome da instância)
-_open_cycles: dict[str, int] = {}
+# Intervalo da limpeza automática de mensagens antigas
+_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60  # 1 vez por dia
 
 
 async def _tentar_reconectar(client, nome: str) -> bool:
@@ -98,15 +98,12 @@ async def _tentar_reconectar(client, nome: str) -> bool:
 
 async def _watchdog():
     """
-    Monitora o estado de conexão WhatsApp de cada instância a cada 5 minutos.
-
-    Dois modos de atuação:
-    1. State != "open": delega para _tentar_reconectar() com retry inteligente.
-    2. State == "open" por N ciclos consecutivos (_GHOST_RESTART_CYCLES): reinicia
-       o Baileys via restart_instance() para eliminar ghost connections (conexões
-       que parecem vivas mas o WebSocket subjacente está morto).
+    Monitora o estado de conexão WhatsApp de cada instância a cada 10 minutos.
+    Se a instância não estiver "open", tenta reconectar com retry inteligente.
+    Não faz restarts preventivos — isso causava falsos positivos e tempestades de QR.
     """
     from app.infrastructure.external.evolution_client import EvolutionClient
+    from app.interfaces.api.v1.routers.webhook_router import _reconnecting
 
     # Aguarda inicialização completa antes da primeira verificação
     await asyncio.sleep(60)
@@ -124,32 +121,16 @@ async def _watchdog():
                     state = data.get("instance", {}).get("state", "unknown")
 
                     if state == "open":
-                        _open_cycles[nome] = _open_cycles.get(nome, 0) + 1
-                        cycles = _open_cycles[nome]
-
-                        if cycles >= _GHOST_RESTART_CYCLES:
-                            # Heartbeat: reinicia Baileys para garantir que o WebSocket
-                            # está realmente vivo e não é uma ghost connection.
-                            logger.info(
-                                f"[Watchdog] {nome}: heartbeat — {cycles} ciclos 'open'. "
-                                f"Reiniciando Baileys para verificar conexão real..."
-                            )
-                            try:
-                                await client.restart_instance()
-                                _open_cycles[nome] = 0
-                                logger.info(f"[Watchdog] {nome}: restart preventivo concluído ✓")
-                            except Exception as e:
-                                logger.warning(f"[Watchdog] {nome}: falha no restart preventivo: {e}")
-                                _open_cycles[nome] = 0  # Reset para evitar loop de falhas
-                        else:
-                            logger.info(
-                                f"[Watchdog] {nome}: conectado (open) ✓ "
-                                f"[ciclo {cycles}/{_GHOST_RESTART_CYCLES}]"
-                            )
+                        logger.info(f"[Watchdog] {nome}: conectado (open) ✓")
                     else:
-                        _open_cycles[nome] = 0  # Reset contador ao detectar desconexão
-                        logger.warning(f"[Watchdog] {nome}: estado '{state}' detectado.")
-                        await _tentar_reconectar(client, nome)
+                        # Evita tentar reconectar se o webhook já está tratando isso
+                        if nome in _reconnecting:
+                            logger.info(
+                                f"[Watchdog] {nome}: reconexão já em andamento via webhook, aguardando..."
+                            )
+                        else:
+                            logger.warning(f"[Watchdog] {nome}: estado '{state}' detectado.")
+                            await _tentar_reconectar(client, nome)
 
                 except Exception as e:
                     logger.error(f"[Watchdog] Erro ao verificar {nome}: {e}")
@@ -160,6 +141,33 @@ async def _watchdog():
         await asyncio.sleep(_WATCHDOG_INTERVAL_SECONDS)
 
 
+async def _cleanup_old_messages():
+    """
+    Remove mensagens com mais de _CLEANUP_DAYS dias do banco, uma vez por dia.
+    Libera espaço em disco e mantém queries do painel rápidas.
+    """
+    from app.infrastructure.database.session import async_session
+    from app.domain.entities.models import Mensagem
+    from sqlalchemy import delete as sa_delete
+
+    while True:
+        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=_CLEANUP_DAYS)
+            async with async_session() as session:
+                result = await session.execute(
+                    sa_delete(Mensagem).where(Mensagem.data_hora < cutoff)
+                )
+                await session.commit()
+                deleted = result.rowcount
+                if deleted > 0:
+                    logger.info(f"[Cleanup] {deleted} mensagens com mais de {_CLEANUP_DAYS} dias removidas.")
+                else:
+                    logger.info(f"[Cleanup] Nenhuma mensagem antiga para remover.")
+        except Exception as e:
+            logger.error(f"[Cleanup] Erro na limpeza automática: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gerencia ciclo de vida da aplicação: startup e shutdown."""
@@ -168,16 +176,19 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     watchdog_task = asyncio.create_task(_watchdog())
-    logger.info("[Lifespan] Banco inicializado. Watchdog de conexão ativo.")
+    cleanup_task = asyncio.create_task(_cleanup_old_messages())
+    logger.info("[Lifespan] Banco inicializado. Watchdog e limpeza automática ativos.")
 
     yield
 
     watchdog_task.cancel()
-    try:
-        await watchdog_task
-    except asyncio.CancelledError:
-        pass
-    logger.info("[Lifespan] Watchdog encerrado.")
+    cleanup_task.cancel()
+    for task in (watchdog_task, cleanup_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    logger.info("[Lifespan] Watchdog e cleanup encerrados.")
 
 
 def create_app() -> FastAPI:
