@@ -332,7 +332,7 @@ class PortfolioRAG:
             return 5
         return 3  # default
 
-    def retrieve(self, query: str, top_k: int = 3) -> str:
+    async def retrieve(self, query: str, top_k: int = 3) -> str:
         """
         Busca FAISS com threshold de distância L2 e fallback garantido.
         Prefira `retrieve_smart()` que calcula top_k automaticamente.
@@ -341,7 +341,7 @@ class PortfolioRAG:
             logger.warning("RAG vazio, usando fallback.")
             return self._fallback_context
 
-        response = self.client.models.embed_content(
+        response = await self.client.aio.models.embed_content(
             model=self.embedding_model,
             contents=query,
             config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
@@ -373,14 +373,14 @@ class PortfolioRAG:
         logger.info("RAG: nenhum chunk relevante encontrado. Usando fallback (curriculo+stacks).")
         return self._fallback_context
 
-    def retrieve_smart(self, query: str) -> str:
+    async def retrieve_smart(self, query: str) -> str:
         """
         Retrieval com top_k dinâmico baseado na intenção da query.
         Use este método em vez de retrieve() para respostas mais precisas.
         """
         top_k = self._calcular_top_k(query)
         logger.info(f"RAG retrieve_smart: top_k={top_k} para query: '{query[:60]}'")
-        return self.retrieve(query, top_k=top_k)
+        return await self.retrieve(query, top_k=top_k)
 
     def load_project_if_mentioned(self, query: str) -> Optional[str]:
         """

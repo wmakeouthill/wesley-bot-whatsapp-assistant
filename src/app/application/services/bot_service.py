@@ -239,7 +239,7 @@ class AtendimentoService:
 
         logger.info(f"RAG query topic: '{topico_query}' (audio={_quer_audio}, planilha={_quer_planilha})")
 
-        contexto_rag = self.rag.retrieve_smart(topico_query)
+        contexto_rag = await self.rag.retrieve_smart(topico_query)
         projeto_md = self.rag.load_project_if_mentioned(topico_query)
         contexto = (projeto_md + "\n---\n" + contexto_rag) if projeto_md else contexto_rag
 
@@ -276,7 +276,7 @@ class AtendimentoService:
         
         # Recupera o contexto do portfólio para a instância pessoal também
         topico_query = " ".join(texto_lower.split()).strip() or texto
-        contexto_rag = self.rag.retrieve_smart(topico_query)
+        contexto_rag = await self.rag.retrieve_smart(topico_query)
         projeto_md = self.rag.load_project_if_mentioned(topico_query)
         contexto = (projeto_md + "\n---\n" + contexto_rag) if projeto_md else contexto_rag
         contexto = self._aplicar_token_budget(contexto, historico_str, texto)
@@ -284,11 +284,15 @@ class AtendimentoService:
         if _quer_audio:
             resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, contexto, para_audio=True)
             try:
-                tts = gTTS(text=resposta, lang="pt", slow=False)
-                audio_io = io.BytesIO()
-                tts.write_to_fp(audio_io)
-                audio_io.seek(0)
-                b64 = base64.b64encode(audio_io.read()).decode("utf-8")
+                import asyncio
+                def _gerar_tts():
+                    tts = gTTS(text=resposta, lang="pt", slow=False)
+                    audio_io = io.BytesIO()
+                    tts.write_to_fp(audio_io)
+                    audio_io.seek(0)
+                    return base64.b64encode(audio_io.read()).decode("utf-8")
+                
+                b64 = await asyncio.to_thread(_gerar_tts)
                 await ev_client.send_base64_audio(telefone, b64)
                 await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
             except Exception as e:
@@ -311,7 +315,7 @@ class AtendimentoService:
         template = PROMPT_PESSOAL_AUDIO if para_audio else PROMPT_PESSOAL
         prompt = template.format(nome_cliente=nome, texto=texto, historico=historico, contexto=contexto)
         try:
-            response = self.llm_client.models.generate_content(
+            response = await self.llm_client.aio.models.generate_content(
                 model=settings.gemini_model,
                 contents=prompt,
             )
@@ -567,7 +571,7 @@ class AtendimentoService:
             texto=texto,
         )
         try:
-            response = self.llm_client.models.generate_content(
+            response = await self.llm_client.aio.models.generate_content(
                 model=settings.gemini_model, contents=prompt
             )
             return response.text
@@ -590,7 +594,7 @@ class AtendimentoService:
             texto=texto,
         )
         try:
-            response = self.llm_client.models.generate_content(
+            response = await self.llm_client.aio.models.generate_content(
                 model=settings.gemini_model, contents=prompt
             )
             clean = response.text.replace("**", "").replace("*", "").replace("#", "").replace("- ", "")
@@ -611,11 +615,15 @@ class AtendimentoService:
         resposta_texto = await self._gerar_resposta_portfolio_audio(nome, texto, contexto, historico)
         logger.info(f"Gerando áudio TTS para {telefone}: {resposta_texto[:60]}...")
         try:
-            tts = gTTS(text=resposta_texto, lang="pt", slow=False)
-            audio_io = io.BytesIO()
-            tts.write_to_fp(audio_io)
-            audio_io.seek(0)
-            b64 = base64.b64encode(audio_io.read()).decode("utf-8")
+            import asyncio
+            def _gerar_tts_portfolio():
+                tts = gTTS(text=resposta_texto, lang="pt", slow=False)
+                audio_io = io.BytesIO()
+                tts.write_to_fp(audio_io)
+                audio_io.seek(0)
+                return base64.b64encode(audio_io.read()).decode("utf-8")
+
+            b64 = await asyncio.to_thread(_gerar_tts_portfolio)
             await ev_client.send_base64_audio(telefone, b64)
             await self._salvar_mensagem(telefone, nome, resposta_texto, "ENVIADA")
         except Exception as e:
@@ -646,7 +654,7 @@ Python | Avançado | Backend
 """
         try:
             from openpyxl.styles import Font, PatternFill, Border, Side
-            response = self.llm_client.models.generate_content(
+            response = await self.llm_client.aio.models.generate_content(
                 model=settings.gemini_model, contents=prompt_planilha
             )
             linhas_raw = response.text.strip().split("\n")

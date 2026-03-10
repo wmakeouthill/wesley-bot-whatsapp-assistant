@@ -15,8 +15,8 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Intervalo do watchdog: verifica conexão WhatsApp a cada 10 minutos
-_WATCHDOG_INTERVAL_SECONDS = 10 * 60
+# Intervalo do watchdog: verifica conexão WhatsApp a cada 2 minutos (reduzido para mitigar ghost connections)
+_WATCHDOG_INTERVAL_SECONDS = 2 * 60
 
 # Segundos para aguardar o Baileys estabelecer conexão após connect_instance()
 _RECONNECT_CHECK_DELAY = 20
