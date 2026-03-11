@@ -292,7 +292,7 @@ class AtendimentoService:
                     audio_io.seek(0)
                     return base64.b64encode(audio_io.read()).decode("utf-8")
                 
-                b64 = await asyncio.to_thread(_gerar_tts)
+                b64 = await asyncio.wait_for(asyncio.to_thread(_gerar_tts), timeout=30.0)
                 await ev_client.send_base64_audio(telefone, b64)
                 await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
             except Exception as e:
@@ -623,7 +623,7 @@ class AtendimentoService:
                 audio_io.seek(0)
                 return base64.b64encode(audio_io.read()).decode("utf-8")
 
-            b64 = await asyncio.to_thread(_gerar_tts_portfolio)
+            b64 = await asyncio.wait_for(asyncio.to_thread(_gerar_tts_portfolio), timeout=30.0)
             await ev_client.send_base64_audio(telefone, b64)
             await self._salvar_mensagem(telefone, nome, resposta_texto, "ENVIADA")
         except Exception as e:

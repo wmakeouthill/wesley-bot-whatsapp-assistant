@@ -14,6 +14,15 @@ engine = create_async_engine(
     pool_pre_ping=True,  # valida a conexão antes de usar (evita "connection closed" após idle)
     pool_recycle=1800,   # recicla conexões a cada 30min (evita timeout do PostgreSQL)
     pool_timeout=30,     # aguarda até 30s por uma conexão livre antes de lançar erro
+    # Defense anti-drop de rede e Ghost Connections no OS (TCP Half-Open após inatividade)
+    connect_args={
+        "command_timeout": 15,  # evita transações congeladas se o servidor morrer silenciosamente
+        "server_settings": {
+            "tcp_keepalives_idle": "60",     # OS avisa que a conexão TCP expirou muito antes do webhook chegar
+            "tcp_keepalives_interval": "10",
+            "tcp_keepalives_count": "5"
+        }
+    }
 )
 
 async_session = async_sessionmaker(
