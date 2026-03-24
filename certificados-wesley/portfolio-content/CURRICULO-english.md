@@ -1,8 +1,8 @@
-# Résumé - Wesley Correia
+# Résumé - Wesley de Carvalho Augusto Correia
 
 ## Personal Information
 
-- **Full Name:** Wesley Correia
+- **Full Name:** Wesley de Carvalho Augusto Correia
 - **GitHub:** [wmakeouthill](https://github.com/wmakeouthill)
 - **LinkedIn:** [wcacorreia](https://www.linkedin.com/in/wcacorreia)
 - **Email:** <wcacorreia1995@gmail.com>

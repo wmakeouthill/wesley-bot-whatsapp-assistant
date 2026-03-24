@@ -311,7 +311,7 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ## 👨‍💻 Author
 
-Wesley Correia — Full-Stack Developer passionate about technology and innovative solutions.
+Wesley de Carvalho Augusto Correia — Full-Stack Developer passionate about technology and innovative solutions.
 
 ## 🌐 Portfolio
 
@@ -348,7 +348,7 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ## 👨‍💻 Author
 
-Wesley Correia — Full-Stack Developer passionate about technology and innovative solutions.
+Wesley de Carvalho Augusto Correia — Full-Stack Developer passionate about technology and innovative solutions.
 
 ## 🌐 Portfolio
 

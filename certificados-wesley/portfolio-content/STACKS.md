@@ -1,10 +1,10 @@
 # Stacks e Tecnologias - Wesley de Carvalho Augusto Correia
 
-Documentação completa das tecnologias, linguagens, frameworks e ferramentas utilizadas por Wesley Correia em seus projetos profissionais e pessoais.
+Documentação completa das tecnologias, linguagens, frameworks e ferramentas utilizadas por Wesley de Carvalho Augusto Correia em seus projetos profissionais e pessoais.
 
 ## Visão Geral
 
-Wesley Correia trabalha com uma stack moderna e enterprise, focada em desenvolvimento full-stack com Java/Spring e C#/.NET no backend, Angular e React no frontend, além de fortes integrações em IA generativa (RAG) e Visão Computacional. Possui experiência diversificada em diferentes setores, desde automações simples até sistemas críticos de infraestrutura financeira, pipelines em nuvem e algoritmos preditivos com Prophet (Python), processamento vetorial (FAISS, pgvector) e LLMs.
+Wesley de Carvalho Augusto Correia trabalha com uma stack moderna e enterprise, focada em desenvolvimento full-stack com Java/Spring e C#/.NET no backend, Angular e React no frontend, além de fortes integrações em IA generativa (RAG) e Visão Computacional. Possui experiência diversificada em diferentes setores, desde automações simples até sistemas críticos de infraestrutura financeira, pipelines em nuvem e algoritmos preditivos com Prophet (Python), processamento vetorial (FAISS, pgvector) e LLMs.
 
 ### Stack Principal Atual
 

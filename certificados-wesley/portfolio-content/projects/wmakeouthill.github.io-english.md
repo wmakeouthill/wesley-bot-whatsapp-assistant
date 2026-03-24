@@ -1,6 +1,6 @@
 # 🌐 Full‑Stack Professional Portfolio
 
-This repository contains **Wesley Correia’s (wmakeouthill) professional portfolio**, composed of:
+This repository contains **Wesley de Carvalho Augusto Correia’s (wmakeouthill) professional portfolio**, composed of:
 
 - **Backend** in Java 17 + Spring Boot 3.2.3 that:
   - exposes REST APIs for AI chat, contact, and projects;

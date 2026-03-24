@@ -1,6 +1,6 @@
 # 🌐 Portfólio Profissional Full‑Stack
 
-Este repositório contém o **portfólio profissional do Wesley Correia (wmakeouthill)**, composto por:
+Este repositório contém o **portfólio profissional do Wesley de Carvalho Augusto Correia (wmakeouthill)**, composto por:
 
 - **Backend** em Java 17 + Spring Boot 3.2.3, que:
   - expõe APIs REST para chat com IA, contato e projetos;

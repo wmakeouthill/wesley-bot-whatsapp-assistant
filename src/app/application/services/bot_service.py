@@ -25,10 +25,7 @@ logger = logging.getLogger(__name__)
 
 ASSISTANT_DISPLAY_NAME = "a assistente virtual do Wesley"
 WESLEY_PUBLIC_NAME = "Wesley"
-FULL_NAME_FALLBACK_RESPONSE = (
-    "Prefiro não confirmar nome completo automaticamente por aqui. "
-    "Se precisar dessa confirmação exata, o Wesley responde pessoalmente."
-)
+WESLEY_PUBLIC_FULL_NAME = "Wesley de Carvalho Augusto Correia"
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +42,6 @@ Baseado ESTREITAMENTE nesse contexto, responda a pergunta do usuário.
 Se a informação não estiver no contexto, diga que você vai anotar a dúvida para o próprio Wesley responder depois, e NUNCA invente informações.
 
 Regras críticas:
-- Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
 - Se já houver saudação anterior no histórico, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 CONTEXTO DEDUZIDO DO PORTFÓLIO:
@@ -67,7 +63,6 @@ Abaixo está o CONTEXTO contendo as informações sobre o Wesley.
 Baseado ESTREITAMENTE nesse contexto, responda a pergunta do usuário. Se não souber dizer, fale que não sabe. NUNCA invente informações.
 
 Regras críticas:
-- Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
 - Se já houver saudação anterior no histórico, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 CONTEXTO DEDUZIDO DO PORTFÓLIO:
@@ -87,7 +82,6 @@ Regras de personalidade:
 - Não use markdown (sem **, sem #, sem listas com -).
 - Se não souber algo, diga que vai anotar para o Wesley responder pessoalmente em breve. NUNCA invente informações.
 - Nome de exibição no WhatsApp: {nome_cliente}. Esse nome pode estar desatualizado ou incompleto.
-- Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
 - Se o histórico já mostrar uma saudação anterior da assistente, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 Abaixo está o CONTEXTO contendo as informações profissionais, habilidades e portfólio do Wesley.
@@ -112,8 +106,7 @@ Regras:
 3. Escreva para ser falado (ex: "Node J S", "C Sharp", "cem por cento").
 4. Não invente informações. Se não souber, diga que o Wesley responde depois.
 5. Nome de exibição no WhatsApp: {nome_cliente}. Esse nome pode estar desatualizado ou incompleto.
-6. Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
-7. Se o histórico já mostrar uma saudação anterior da assistente, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
+6. Se o histórico já mostrar uma saudação anterior da assistente, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 Abaixo está o CONTEXTO profissional do Wesley. Use essas informações se perguntarem de trabalho ou habilidades dele. NUNCA invente:
 {contexto}
@@ -235,7 +228,12 @@ class AtendimentoService:
             return
 
         # --- Salva mensagem recebida ---
-        await self._salvar_mensagem(contato_memoria_id, nome_cliente, texto_recebido, "RECEBIDA", id_mensagem)
+        mensagem_nova = await self._salvar_mensagem(
+            contato_memoria_id, nome_cliente, texto_recebido, "RECEBIDA", id_mensagem
+        )
+        if not mensagem_nova:
+            logger.info(f"Mensagem duplicada ignorada: {id_mensagem}")
+            return
 
         # --- Roteamento por instância: pessoal vs portfólio ---
         if instancia == settings.evolution_instance_two_name:
@@ -921,7 +919,7 @@ Python | Avançado | Backend
             or "nome completo de verdade" in texto_norm
         )
         if pergunta_nome_completo:
-            return FULL_NAME_FALLBACK_RESPONSE
+            return f"O nome completo dele é {WESLEY_PUBLIC_FULL_NAME}."
 
         pergunta_nome_wesley = (
             "nome do wesley" in texto_norm
@@ -976,9 +974,9 @@ Python | Avançado | Backend
         texto: str,
         direcao: str,
         msg_id: Optional[str] = None,
-    ):
+    ) -> bool:
         if not texto:
-            return
+            return False
         async with async_session() as session:
             contato_id = self._normalizar_contato_id(whatsapp_id)
             variantes = self._variantes_contato_id(whatsapp_id)
@@ -997,7 +995,7 @@ Python | Avançado | Backend
                 stmt_msg = select(Mensagem).where(Mensagem.mensagem_id_whatsapp == msg_id)
                 result_msg = await session.execute(stmt_msg)
                 if result_msg.scalar_one_or_none():
-                    return
+                    return False
 
             nova_msg = Mensagem(
                 id=str(uuid.uuid4()),
@@ -1009,6 +1007,7 @@ Python | Avançado | Backend
             )
             session.add(nova_msg)
             await session.commit()
+            return True
 
     async def _obter_historico(self, whatsapp_id: str, limite: int = 5) -> str:
         async with async_session() as session:

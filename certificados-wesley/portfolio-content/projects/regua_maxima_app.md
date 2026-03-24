@@ -277,7 +277,7 @@ Abra um Pull Request
 Este projeto está sob a licença MIT. Veja o arquivo LICENSE para mais detalhes.
 
 🙋‍♂️ Autor
-Wesley Correia - Desenvolvedor Full-Stack apaixonado por tecnologia e soluções inovadoras.
+Wesley de Carvalho Augusto Correia - Desenvolvedor Full-Stack apaixonado por tecnologia e soluções inovadoras.
 
 🌐 Portfólio
 💼 LinkedIn
@@ -571,7 +571,7 @@ Abra um Pull Request
 Este projeto está sob a licença MIT. Veja o arquivo LICENSE para mais detalhes.
 
 🙋‍♂️ Autor
-Wesley Correia - Desenvolvedor Full-Stack apaixonado por tecnologia e soluções inovadoras.
+Wesley de Carvalho Augusto Correia - Desenvolvedor Full-Stack apaixonado por tecnologia e soluções inovadoras.
 
 🌐 Portfólio
 💼 LinkedIn

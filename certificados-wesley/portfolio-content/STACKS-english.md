@@ -1,10 +1,10 @@
-# Stacks and Technologies - Wesley Correia
+# Stacks and Technologies - Wesley de Carvalho Augusto Correia
 
-Complete documentation of the technologies, languages, frameworks, and tools used by Wesley Correia in his professional and personal projects.
+Complete documentation of the technologies, languages, frameworks, and tools used by Wesley de Carvalho Augusto Correia in his professional and personal projects.
 
 ## Overview
 
-Wesley Correia works with a modern, enterprise stack focused on full-stack development with Java/Spring on the backend and Angular on the frontend. He has diversified experience across different sectors, from simple automations to critical financial infrastructure systems.
+Wesley de Carvalho Augusto Correia works with a modern, enterprise stack focused on full-stack development with Java/Spring on the backend and Angular on the frontend. He has diversified experience across different sectors, from simple automations to critical financial infrastructure systems.
 
 ### Current Main Stack
 
