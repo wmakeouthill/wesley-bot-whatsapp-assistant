@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -95,6 +96,10 @@ class DocumentCatalogService:
         if not normalized_query:
             return None
 
+        indexed_certificate = self._find_certificate_by_index(normalized_query)
+        if indexed_certificate is not None:
+            return indexed_certificate
+
         if any(term in normalized_query for term in ("curriculo", "curriculum", "cv", "resume")):
             resume = self.get_resume(language)
             if resume:
@@ -145,3 +150,22 @@ class DocumentCatalogService:
 
     def load_base64(self, entry: DocumentEntry) -> str:
         return base64.b64encode(entry.path.read_bytes()).decode("utf-8")
+
+    def build_delivery_filename(self, entry: DocumentEntry, language: str = "pt") -> str:
+        base_title = entry.title_en if language == "en" and entry.category == "certificate" else entry.title_pt
+        normalized = unicodedata.normalize("NFKD", base_title)
+        ascii_name = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        ascii_name = re.sub(r"[^A-Za-z0-9._ -]+", "", ascii_name).strip().replace(" ", "_")
+        if not ascii_name.lower().endswith(".pdf"):
+            ascii_name += ".pdf"
+        return ascii_name or entry.filename
+
+    def _find_certificate_by_index(self, normalized_query: str) -> Optional[DocumentEntry]:
+        certs = [e for e in self._entries if e.category == "certificate"]
+        match = re.search(r"\b(?:certificado|certificate)?\s*(\d{1,2})\b", normalized_query)
+        if not match:
+            return None
+        index = int(match.group(1))
+        if 1 <= index <= len(certs):
+            return certs[index - 1]
+        return None

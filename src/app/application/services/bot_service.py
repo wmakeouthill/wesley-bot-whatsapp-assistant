@@ -926,8 +926,9 @@ Python | Avançado | Backend
 
         b64 = self.document_catalog.load_base64(entry)
         caption = self._build_document_caption(entry, language)
-        await ev_client.send_base64_document(telefone, b64, entry.filename, caption)
-        await self._salvar_mensagem(contato_memoria_id, nome, f"[Documento enviado] {entry.filename}", "ENVIADA")
+        delivery_filename = self.document_catalog.build_delivery_filename(entry, language)
+        await ev_client.send_base64_document(telefone, b64, delivery_filename, caption)
+        await self._salvar_mensagem(contato_memoria_id, nome, f"[Documento enviado] {delivery_filename}", "ENVIADA")
         return True
 
     async def _try_handle_tailored_resume_request(
@@ -989,6 +990,8 @@ Rules:
 - Keep the structure clean and professional, close to a real recruiter-facing resume.
 - Limit to the most relevant experiences, but keep dates and employers truthful.
 - Each experience should emphasize impact, technical scope, architecture, cloud/devops, AI, or business value when supported by context.
+- Always keep formal education truthful and include completed higher education and completed postgraduate education when present in context.
+- Always preserve the completed postgraduate education if it exists in the source context.
 
 Required markdown structure:
 # Wesley de Carvalho Augusto Correia
@@ -1009,6 +1012,7 @@ For each relevant role:
 *Period: ...*
 - 3 to 6 bullets with concrete responsibilities, technologies, and outcomes.
 ## Education
+Include completed and ongoing degrees/postgraduate programs from the source context, with the completed postgraduate clearly present when available.
 ## Certifications
 List only the most relevant certifications for the vacancy.
 ## Languages
@@ -1034,6 +1038,8 @@ Regras:
 - Mantenha estrutura limpa e profissional, próxima de um currículo real voltado a recrutador.
 - Foque nas experiências mais aderentes, mas preserve datas, empresas e fatos reais.
 - Cada experiência deve destacar impacto, escopo técnico, arquitetura, cloud/devops, IA ou valor de negócio quando houver suporte no contexto.
+- Mantenha a formação acadêmica fiel e inclua ensino superior e pós-graduações concluídas quando existirem no contexto.
+- Preserve sempre a pós-graduação concluída se ela existir no contexto-fonte.
 
 Estrutura obrigatória em markdown:
 # Wesley de Carvalho Augusto Correia
@@ -1054,6 +1060,7 @@ Para cada experiência mais relevante:
 *Período: ...*
 - 3 a 6 bullets com responsabilidades, tecnologias e resultados concretos.
 ## Formação Acadêmica
+Inclua graduações e pós-graduações em andamento/concluídas do contexto, deixando a pós concluída explicitamente presente quando houver.
 ## Certificações
 Liste apenas as certificações mais relevantes para a vaga.
 ## Idiomas
