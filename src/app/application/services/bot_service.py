@@ -15,6 +15,7 @@ from sqlalchemy import select, or_
 from app.domain.schemas.webhook import WebhookBody
 from app.infrastructure.external.evolution_client import EvolutionClient
 from app.domain.services.rag_service import PortfolioRAG
+from app.domain.services.document_catalog_service import DocumentCatalogService, DocumentEntry
 from app.infrastructure.database.session import async_session
 from app.domain.entities.models import Cliente, Mensagem, BotConfig, AllowBlockEntry
 from app.infrastructure.config.settings import settings
@@ -144,6 +145,7 @@ class AtendimentoService:
         self.evolution_client = evolution_client
         self.rag = PortfolioRAG()
         self.rag.initialize_or_build()
+        self.document_catalog = DocumentCatalogService()
         self.llm_client = genai.Client(api_key=settings.gemini_api_key)
 
     # -----------------------------------------------------------------------
@@ -237,6 +239,9 @@ class AtendimentoService:
     ):
         telefone_numero = telefone.split("@")[0] if "@" in telefone else telefone
         texto_lower = texto.lower()
+        handled_document = await self._try_handle_document_request(ev_client, telefone, contato_memoria_id, nome, texto)
+        if handled_document:
+            return
         resposta_identidade = self._resposta_identidade_deterministica(texto)
         if resposta_identidade:
             try:
@@ -307,6 +312,9 @@ class AtendimentoService:
     ):
         """Responde como o assistente pessoal do Wesley, usando o histórico da conversa."""
         texto_lower = texto.lower()
+        handled_document = await self._try_handle_document_request(ev_client, telefone, contato_memoria_id, nome, texto)
+        if handled_document:
+            return
         resposta_identidade = self._resposta_identidade_deterministica(texto)
         if resposta_identidade:
             try:
@@ -813,6 +821,72 @@ Python | Avançado | Backend
         texto = unicodedata.normalize("NFKD", texto.lower())
         texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
         return " ".join(texto.split())
+
+    def _detectar_idioma_documento(self, texto: str) -> str:
+        texto_norm = self._normalizar_texto_intencao(texto)
+        if any(k in texto_norm for k in ("english", "in english", "ingles", "em ingles", "resume")):
+            return "en"
+        return "pt"
+
+    def _is_certificate_listing_request(self, texto: str) -> bool:
+        texto_norm = self._normalizar_texto_intencao(texto)
+        return (
+            any(term in texto_norm for term in ("certificado", "certificados", "certificate", "certificates"))
+            and any(
+                termo in texto_norm
+                for termo in ("quais", "listar", "lista", "tenho", "possuo", "mostrar", "mostra")
+            )
+        )
+
+    def _is_send_request(self, texto: str) -> bool:
+        texto_norm = self._normalizar_texto_intencao(texto)
+        return any(
+            termo in texto_norm
+            for termo in (
+                "manda", "manda ai", "mandar", "envia", "enviar", "me manda",
+                "me envia", "pode mandar", "pode enviar", "send", "attach", "anexa",
+            )
+        )
+
+    def _build_document_caption(self, entry: DocumentEntry, language: str) -> str:
+        if entry.category == "resume_en":
+            return "Segue o resume em inglês do Wesley."
+        if entry.category == "resume_pt":
+            return "Segue o currículo do Wesley."
+        return (
+            f"Segue o certificado: {entry.title_en}."
+            if language == "en"
+            else f"Segue o certificado: {entry.title_pt}."
+        )
+
+    async def _try_handle_document_request(
+        self,
+        ev_client: EvolutionClient,
+        telefone: str,
+        contato_memoria_id: str,
+        nome: str,
+        texto: str,
+    ) -> bool:
+        language = self._detectar_idioma_documento(texto)
+
+        if self._is_certificate_listing_request(texto):
+            resposta = self.document_catalog.build_certificate_list_message(language)
+            await ev_client.send_text_message(telefone, resposta)
+            await self._salvar_mensagem(contato_memoria_id, nome, resposta, "ENVIADA")
+            return True
+
+        if not self._is_send_request(texto):
+            return False
+
+        entry = self.document_catalog.find_best_document(texto, language)
+        if not entry:
+            return False
+
+        b64 = self.document_catalog.load_base64(entry)
+        caption = self._build_document_caption(entry, language)
+        await ev_client.send_base64_document(telefone, b64, entry.filename, caption)
+        await self._salvar_mensagem(contato_memoria_id, nome, f"[Documento enviado] {entry.filename}", "ENVIADA")
+        return True
 
     def _resposta_identidade_deterministica(self, texto: str) -> Optional[str]:
         texto_norm = self._normalizar_texto_intencao(texto)

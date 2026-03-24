@@ -10,6 +10,7 @@ from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 from google import genai
 from google.genai import types
+from pypdf import PdfReader
 
 from app.infrastructure.config.settings import settings
 
@@ -138,6 +139,7 @@ class PortfolioRAG:
 
     def __init__(self, data_dir: str = "certificados-wesley/portfolio-content"):
         self.data_dir = Path(data_dir)
+        self.documents_dir = self.data_dir.parent
         self.index_path = "vector_store.faiss"
         self.metadata_path = "vector_metadata.pkl"
 
@@ -171,9 +173,13 @@ class PortfolioRAG:
         if index_exists:
             index_mtime = os.path.getmtime(self.index_path)
             md_files = list(self.data_dir.glob("**/*.md"))
-            newest_md = max((f.stat().st_mtime for f in md_files), default=0)
-            if newest_md > index_mtime:
-                logger.info("Markdowns mais recentes que o índice. Recriando RAG...")
+            pdf_files = list(self.documents_dir.glob("*.pdf"))
+            newest_source = max(
+                [f.stat().st_mtime for f in md_files] + [f.stat().st_mtime for f in pdf_files],
+                default=0,
+            )
+            if newest_source > index_mtime:
+                logger.info("Arquivos de conteúdo mais recentes que o índice. Recriando RAG...")
                 needs_rebuild = True
 
         if needs_rebuild:
@@ -184,6 +190,9 @@ class PortfolioRAG:
             self.index = faiss.read_index(self.index_path)
             with open(self.metadata_path, "rb") as f:
                 self.chunks_metadata = pickle.load(f)
+            if not any(str(meta.get("source", "")).lower().endswith(".pdf") for meta in self.chunks_metadata):
+                logger.info("Índice atual não contém PDFs. Recriando RAG...")
+                self._build_index()
 
         self._load_fallback_context()
         self.project_detector.load()
@@ -237,7 +246,8 @@ class PortfolioRAG:
             return
 
         md_files = sorted(self.data_dir.glob("**/*.md"))
-        logger.info(f"RAG: indexando {len(md_files)} arquivos markdown...")
+        pdf_files = sorted(self.documents_dir.glob("*.pdf"))
+        logger.info(f"RAG: indexando {len(md_files)} markdowns e {len(pdf_files)} PDFs...")
 
         # --- 1ª passagem: extração de chunks -----------------------------------
         all_chunks: List[Tuple[str, Dict]] = []
@@ -278,6 +288,28 @@ class PortfolioRAG:
                     all_chunks.append((chunk, meta))
             except Exception as e:
                 logger.error(f"Erro lendo {md_file}: {e}")
+
+        for pdf_file in pdf_files:
+            try:
+                content = self._extract_pdf_text(pdf_file)
+                if not content:
+                    logger.warning(f"PDF sem texto extraível: {pdf_file}")
+                    continue
+
+                rel_str = pdf_file.name
+                header = f"--- Documento PDF: {rel_str} ---\n"
+                texto_com_header = header + content
+                file_chunks = self._chunk_text(texto_com_header, chunk_size=900, overlap=120)
+                for chunk in file_chunks:
+                    meta = {
+                        "text": chunk,
+                        "source": rel_str,
+                        "is_project": False,
+                        "is_fallback": False,
+                    }
+                    all_chunks.append((chunk, meta))
+            except Exception as e:
+                logger.error(f"Erro lendo PDF {pdf_file}: {e}")
 
         if not all_chunks:
             logger.warning("Nenhum texto extraído. RAG vazio.")
@@ -414,3 +446,13 @@ class PortfolioRAG:
     def _sanitize_markdown(self, content: str) -> str:
         """Remove comentários HTML embutidos para não indexar instruções/segredos ocultos."""
         return re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip()
+
+    def _extract_pdf_text(self, pdf_path: Path) -> str:
+        reader = PdfReader(str(pdf_path))
+        parts: list[str] = []
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            page_text = " ".join(page_text.split())
+            if page_text:
+                parts.append(page_text)
+        return "\n".join(parts).strip()
