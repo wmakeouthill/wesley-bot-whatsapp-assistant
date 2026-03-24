@@ -202,7 +202,7 @@ class PortfolioRAG:
                 ]
             if matches:
                 try:
-                    content = matches[0].read_text(encoding="utf-8")
+                    content = self._sanitize_markdown(matches[0].read_text(encoding="utf-8"))
                     if fname.upper() == MINIMUM_CONTEXT_FILE.upper():
                         self._minimum_context = f"--- {fname} ---\n{content}"
                     parts.append(f"--- {fname} ---\n{content}")
@@ -244,7 +244,7 @@ class PortfolioRAG:
 
         for md_file in md_files:
             try:
-                content = md_file.read_text(encoding="utf-8")
+                content = self._sanitize_markdown(md_file.read_text(encoding="utf-8"))
                 rel = md_file.relative_to(self.data_dir)
                 rel_str = str(rel).replace("\\", "/")
 
@@ -410,3 +410,7 @@ class PortfolioRAG:
             chunks.append(" ".join(words[i: i + chunk_size]))
             i += chunk_size - overlap
         return chunks
+
+    def _sanitize_markdown(self, content: str) -> str:
+        """Remove comentários HTML embutidos para não indexar instruções/segredos ocultos."""
+        return re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL).strip()

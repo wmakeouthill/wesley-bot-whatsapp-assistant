@@ -3,6 +3,7 @@ import uuid
 import base64
 import io
 import re
+import unicodedata
 from typing import Optional
 from datetime import datetime
 
@@ -19,6 +20,13 @@ from app.domain.entities.models import Cliente, Mensagem, BotConfig, AllowBlockE
 from app.infrastructure.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+ASSISTANT_DISPLAY_NAME = "a assistente virtual do Wesley"
+WESLEY_PUBLIC_NAME = "Wesley"
+FULL_NAME_FALLBACK_RESPONSE = (
+    "Prefiro não confirmar nome completo automaticamente por aqui. "
+    "Se precisar dessa confirmação exata, o Wesley responde pessoalmente."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +237,14 @@ class AtendimentoService:
     ):
         telefone_numero = telefone.split("@")[0] if "@" in telefone else telefone
         texto_lower = texto.lower()
+        resposta_identidade = self._resposta_identidade_deterministica(texto)
+        if resposta_identidade:
+            try:
+                await ev_client.send_text_message(telefone, resposta_identidade)
+                await self._salvar_mensagem(contato_memoria_id, nome, resposta_identidade, "ENVIADA")
+            except Exception as e:
+                logger.error(f"Erro ao enviar resposta determinística para {telefone}: {e}")
+            return
 
         _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
         _FORMATO_PLANILHA = {"planilha", "excel", "spreadsheet", "xlsx", "xls"}
@@ -291,6 +307,15 @@ class AtendimentoService:
     ):
         """Responde como o assistente pessoal do Wesley, usando o histórico da conversa."""
         texto_lower = texto.lower()
+        resposta_identidade = self._resposta_identidade_deterministica(texto)
+        if resposta_identidade:
+            try:
+                await ev_client.send_text_message(telefone, resposta_identidade)
+                await self._salvar_mensagem(contato_memoria_id, nome, resposta_identidade, "ENVIADA")
+            except Exception as e:
+                logger.error(f"Erro ao enviar resposta determinística pessoal para {telefone}: {e}")
+            return
+
         _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
         _quer_audio = any(k in texto_lower for k in _FORMATO_AUDIO)
 
@@ -783,6 +808,41 @@ Python | Avançado | Backend
             return "contato"
         primeiro_nome = clean.split()[0]
         return primeiro_nome[:40]
+
+    def _normalizar_texto_intencao(self, texto: str) -> str:
+        texto = unicodedata.normalize("NFKD", texto.lower())
+        texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+        return " ".join(texto.split())
+
+    def _resposta_identidade_deterministica(self, texto: str) -> Optional[str]:
+        texto_norm = self._normalizar_texto_intencao(texto)
+
+        pergunta_nome_assistente = (
+            ("qual seu nome" in texto_norm or "seu nome" in texto_norm or "quem e voce" in texto_norm)
+            and "wesley" not in texto_norm
+        )
+        if pergunta_nome_assistente:
+            return f"Eu sou {ASSISTANT_DISPLAY_NAME} aqui no WhatsApp."
+
+        pergunta_nome_completo = (
+            "nome completo" in texto_norm
+            or "nome inteiro" in texto_norm
+            or "sobrenome" in texto_norm
+            or "nome de verdade" in texto_norm
+            or "nome completo de verdade" in texto_norm
+        )
+        if pergunta_nome_completo:
+            return FULL_NAME_FALLBACK_RESPONSE
+
+        pergunta_nome_wesley = (
+            "nome do wesley" in texto_norm
+            or "quem e o wesley" in texto_norm
+            or ("nome dele" in texto_norm and "wesley" in texto_norm)
+        )
+        if pergunta_nome_wesley:
+            return f"O nome dele é {WESLEY_PUBLIC_NAME}."
+
+        return None
 
     def _combinar_contextos(self, *partes: Optional[str]) -> str:
         partes_unicas: list[str] = []
