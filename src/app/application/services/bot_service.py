@@ -2,6 +2,7 @@ import logging
 import uuid
 import base64
 import io
+import asyncio
 import re
 import unicodedata
 from typing import Optional
@@ -144,9 +145,21 @@ class AtendimentoService:
     def __init__(self, evolution_client: EvolutionClient):
         self.evolution_client = evolution_client
         self.rag = PortfolioRAG()
-        self.rag.initialize_or_build()
+        self._rag_ready = False
+        self._rag_init_lock = asyncio.Lock()
         self.document_catalog = DocumentCatalogService()
         self.llm_client = genai.Client(api_key=settings.gemini_api_key)
+
+    async def ensure_rag_ready(self) -> None:
+        if self._rag_ready:
+            return
+        async with self._rag_init_lock:
+            if self._rag_ready:
+                return
+            logger.info("Inicializando RAG em background/lazy...")
+            await asyncio.to_thread(self.rag.initialize_or_build)
+            self._rag_ready = True
+            logger.info("RAG pronto.")
 
     # -----------------------------------------------------------------------
     # Ponto de entrada do Webhook
@@ -276,6 +289,7 @@ class AtendimentoService:
         topico_query = " ".join(topico_query.split()).strip() or texto
 
         logger.info(f"RAG query topic: '{topico_query}' (audio={_quer_audio}, planilha={_quer_planilha})")
+        await self.ensure_rag_ready()
 
         contexto_rag = await self.rag.retrieve_smart(topico_query)
         projeto_md = self.rag.load_project_if_mentioned(topico_query)
@@ -331,6 +345,7 @@ class AtendimentoService:
         
         # Recupera o contexto do portfólio para a instância pessoal também
         topico_query = " ".join(texto_lower.split()).strip() or texto
+        await self.ensure_rag_ready()
         contexto_rag = await self.rag.retrieve_smart(topico_query)
         projeto_md = self.rag.load_project_if_mentioned(topico_query)
         contexto = self._combinar_contextos(

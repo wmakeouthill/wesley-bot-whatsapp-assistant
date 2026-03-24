@@ -172,23 +172,26 @@ async def _cleanup_old_messages():
 async def lifespan(app: FastAPI):
     """Gerencia ciclo de vida da aplicação: startup e shutdown."""
     from app.infrastructure.database.session import init_db
+    from app.interfaces.api.v1.routers.webhook_router import atendimento_service
 
     await init_db()
 
     watchdog_task = asyncio.create_task(_watchdog())
     cleanup_task = asyncio.create_task(_cleanup_old_messages())
-    logger.info("[Lifespan] Banco inicializado. Watchdog e limpeza automática ativos.")
+    rag_warmup_task = asyncio.create_task(atendimento_service.ensure_rag_ready())
+    logger.info("[Lifespan] Banco inicializado. Watchdog, cleanup e warmup do RAG ativos.")
 
     yield
 
     watchdog_task.cancel()
     cleanup_task.cancel()
-    for task in (watchdog_task, cleanup_task):
+    rag_warmup_task.cancel()
+    for task in (watchdog_task, cleanup_task, rag_warmup_task):
         try:
             await task
         except asyncio.CancelledError:
             pass
-    logger.info("[Lifespan] Watchdog e cleanup encerrados.")
+    logger.info("[Lifespan] Watchdog, cleanup e warmup encerrados.")
 
 
 def create_app() -> FastAPI:
