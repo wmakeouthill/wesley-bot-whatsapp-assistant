@@ -7,6 +7,7 @@ import re
 import unicodedata
 from typing import Optional
 from datetime import datetime
+from pathlib import Path
 
 import openpyxl
 from gtts import gTTS
@@ -17,6 +18,7 @@ from app.domain.schemas.webhook import WebhookBody
 from app.infrastructure.external.evolution_client import EvolutionClient
 from app.domain.services.rag_service import PortfolioRAG
 from app.domain.services.document_catalog_service import DocumentCatalogService, DocumentEntry
+from app.domain.services.resume_tailor_service import ResumeTailorService
 from app.infrastructure.database.session import async_session
 from app.domain.entities.models import Cliente, Mensagem, BotConfig, AllowBlockEntry
 from app.infrastructure.config.settings import settings
@@ -141,6 +143,7 @@ class AtendimentoService:
         self._rag_ready = False
         self._rag_init_lock = asyncio.Lock()
         self.document_catalog = DocumentCatalogService()
+        self.resume_tailor = ResumeTailorService()
         self.llm_client = genai.Client(api_key=settings.gemini_api_key)
 
     async def ensure_rag_ready(self) -> None:
@@ -250,6 +253,11 @@ class AtendimentoService:
     ):
         telefone_numero = telefone.split("@")[0] if "@" in telefone else telefone
         texto_lower = texto.lower()
+        handled_tailored_resume = await self._try_handle_tailored_resume_request(
+            ev_client, telefone, contato_memoria_id, nome, texto
+        )
+        if handled_tailored_resume:
+            return
         handled_document = await self._try_handle_document_request(ev_client, telefone, contato_memoria_id, nome, texto)
         if handled_document:
             return
@@ -324,6 +332,11 @@ class AtendimentoService:
     ):
         """Responde como o assistente pessoal do Wesley, usando o histórico da conversa."""
         texto_lower = texto.lower()
+        handled_tailored_resume = await self._try_handle_tailored_resume_request(
+            ev_client, telefone, contato_memoria_id, nome, texto
+        )
+        if handled_tailored_resume:
+            return
         handled_document = await self._try_handle_document_request(ev_client, telefone, contato_memoria_id, nome, texto)
         if handled_document:
             return
@@ -861,6 +874,22 @@ Python | Avançado | Backend
             )
         )
 
+    def _looks_like_job_posting(self, texto: str) -> bool:
+        texto_norm = self._normalizar_texto_intencao(texto)
+        keywords = (
+            "vaga", "job description", "descricao da vaga", "oportunidade", "responsabilidades",
+            "requisitos", "qualificacoes", "qualifications", "requirements", "about the role",
+        )
+        return len(texto) >= 400 and any(k in texto_norm for k in keywords)
+
+    def _is_tailored_resume_request(self, texto: str) -> bool:
+        texto_norm = self._normalizar_texto_intencao(texto)
+        explicit_request = (
+            any(term in texto_norm for term in ("curriculo", "curriculum", "resume", "cv"))
+            and any(term in texto_norm for term in ("vaga", "job", "adapt", "adapte", "personal", "personaliz"))
+        )
+        return explicit_request or self._looks_like_job_posting(texto)
+
     def _build_document_caption(self, entry: DocumentEntry, language: str) -> str:
         if entry.category == "resume_en":
             return "Segue o resume em inglês do Wesley."
@@ -900,6 +929,152 @@ Python | Avançado | Backend
         await ev_client.send_base64_document(telefone, b64, entry.filename, caption)
         await self._salvar_mensagem(contato_memoria_id, nome, f"[Documento enviado] {entry.filename}", "ENVIADA")
         return True
+
+    async def _try_handle_tailored_resume_request(
+        self,
+        ev_client: EvolutionClient,
+        telefone: str,
+        contato_memoria_id: str,
+        nome: str,
+        texto: str,
+    ) -> bool:
+        if not self._is_tailored_resume_request(texto):
+            return False
+
+        language = self._detectar_idioma_documento(texto)
+        await self.ensure_rag_ready()
+        contexto = self._combinar_contextos(
+            self.rag.get_minimum_context(),
+            await self.rag.retrieve_smart(texto),
+        )
+        markdown_resume = await self._gerar_curriculo_personalizado_markdown(texto, contexto, language)
+
+        md_filename = "Resume_Customizado.md" if language == "en" else "Curriculo_Customizado.md"
+        pdf_filename = "Resume_Customizado.pdf" if language == "en" else "Curriculo_Customizado.pdf"
+
+        md_b64 = base64.b64encode(markdown_resume.encode("utf-8")).decode("utf-8")
+        pdf_b64 = base64.b64encode(
+            self.resume_tailor.markdown_to_pdf_bytes(markdown_resume, title=Path(pdf_filename).stem)
+        ).decode("utf-8")
+
+        md_caption = (
+            "Segue o resume customizado em markdown para essa vaga."
+            if language == "en"
+            else "Segue o currículo customizado em markdown para essa vaga."
+        )
+        pdf_caption = (
+            "Segue o resume customizado em PDF para essa vaga."
+            if language == "en"
+            else "Segue o currículo customizado em PDF para essa vaga."
+        )
+
+        await ev_client.send_base64_document(telefone, md_b64, md_filename, md_caption)
+        await ev_client.send_base64_document(telefone, pdf_b64, pdf_filename, pdf_caption)
+        await self._salvar_mensagem(contato_memoria_id, nome, f"[Currículo customizado enviado] {pdf_filename}", "ENVIADA")
+        return True
+
+    async def _gerar_curriculo_personalizado_markdown(self, vaga_texto: str, contexto: str, language: str) -> str:
+        if language == "en":
+            prompt = f"""
+You are tailoring Wesley's resume for a specific job posting.
+
+Rules:
+- Output ONLY markdown.
+- Do not invent experience, technologies, dates, companies, certifications, or education.
+- Use only facts supported by the context below.
+- Optimize the wording and ordering for the vacancy, but keep it truthful.
+- Write for ATS and technical recruiters.
+- Prioritize the strongest matching keywords from the vacancy naturally in summary, skills, and experience bullets.
+- No tables, no emojis, no decorative prose, no generic fluff.
+- Keep the structure clean and professional, close to a real recruiter-facing resume.
+- Limit to the most relevant experiences, but keep dates and employers truthful.
+- Each experience should emphasize impact, technical scope, architecture, cloud/devops, AI, or business value when supported by context.
+
+Required markdown structure:
+# Wesley de Carvalho Augusto Correia
+## Contact
+- Rio de Janeiro, Brazil
+- Email
+- Phone
+- LinkedIn
+- GitHub
+## Target Role
+## Professional Summary
+2 short paragraphs max, tailored to the vacancy.
+## Core Skills
+12 to 18 bullets, ordered by relevance to the vacancy.
+## Professional Experience
+For each relevant role:
+### Role - Company
+*Period: ...*
+- 3 to 6 bullets with concrete responsibilities, technologies, and outcomes.
+## Education
+## Certifications
+List only the most relevant certifications for the vacancy.
+## Languages
+
+JOB POSTING:
+{vaga_texto}
+
+SOURCE CONTEXT:
+{contexto}
+"""
+        else:
+            prompt = f"""
+Você está adaptando o currículo do Wesley para uma vaga específica.
+
+Regras:
+- Retorne SOMENTE markdown.
+- Não invente experiências, tecnologias, datas, empresas, certificações ou formação.
+- Use apenas fatos sustentados pelo contexto abaixo.
+- Otimize a redação e a ordem para a vaga, mas mantendo total fidelidade.
+- Escreva pensando em ATS e recrutador técnico.
+- Priorize naturalmente as palavras-chave mais fortes da vaga no resumo, competências e bullets de experiência.
+- Não use tabelas, emojis, floreios, nem texto genérico.
+- Mantenha estrutura limpa e profissional, próxima de um currículo real voltado a recrutador.
+- Foque nas experiências mais aderentes, mas preserve datas, empresas e fatos reais.
+- Cada experiência deve destacar impacto, escopo técnico, arquitetura, cloud/devops, IA ou valor de negócio quando houver suporte no contexto.
+
+Estrutura obrigatória em markdown:
+# Wesley de Carvalho Augusto Correia
+## Contato
+- Rio de Janeiro, Brasil
+- Email
+- Telefone
+- LinkedIn
+- GitHub
+## Cargo-Alvo
+## Resumo Profissional
+Máximo de 2 parágrafos curtos, orientados à vaga.
+## Competências-Chave
+12 a 18 bullets, ordenados por relevância para a vaga.
+## Experiência Profissional
+Para cada experiência mais relevante:
+### Cargo - Empresa
+*Período: ...*
+- 3 a 6 bullets com responsabilidades, tecnologias e resultados concretos.
+## Formação Acadêmica
+## Certificações
+Liste apenas as certificações mais relevantes para a vaga.
+## Idiomas
+
+TEXTO DA VAGA:
+{vaga_texto}
+
+CONTEXTO FONTE:
+{contexto}
+"""
+        try:
+            response = await self.llm_client.aio.models.generate_content(
+                model=settings.gemini_model,
+                contents=prompt,
+            )
+            return response.text.strip()
+        except Exception as e:
+            logger.error(f"Erro gerando currículo personalizado: {e}")
+            if language == "en":
+                return "# Wesley de Carvalho Augusto Correia\n\n## Professional Summary\nUnable to generate the tailored resume right now."
+            return "# Wesley de Carvalho Augusto Correia\n\n## Resumo Profissional\nNão foi possível gerar o currículo personalizado agora."
 
     def _resposta_identidade_deterministica(self, texto: str) -> Optional[str]:
         texto_norm = self._normalizar_texto_intencao(texto)
