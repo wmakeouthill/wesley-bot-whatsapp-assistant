@@ -245,9 +245,11 @@ async function verHistorico(jidEnc, nome) {
   conversaJid = jidEnc;
   const chatModal = document.getElementById('chat-modal');
   const chatTitle = document.getElementById('chat-nome');
+  const chatSub = document.getElementById('chat-sub');
   const chatMsgs = document.getElementById('chat-messages');
 
   chatTitle.textContent = nome;
+  chatSub.textContent = '';
   chatMsgs.innerHTML = '<div class="loading">Carregando histórico...</div>';
   chatModal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
@@ -258,14 +260,27 @@ async function verHistorico(jidEnc, nome) {
     return;
   }
 
-  chatMsgs.innerHTML = data.mensagens.map(m => {
-    const dt = m.data_hora ? new Date(m.data_hora + 'Z').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
-    return `
-      <div class="chat-msg ${m.direcao === 'RECEBIDA' ? 'recebida' : 'enviada'}">
+  const total = data.mensagens.length;
+  chatSub.textContent = `${total} mensagem${total !== 1 ? 's' : ''}`;
+
+  let lastDate = null;
+  const parts = [];
+  for (const m of data.mensagens) {
+    const dateObj = m.data_hora ? new Date(m.data_hora + 'Z') : null;
+    const dateStr = dateObj ? dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : null;
+    if (dateStr && dateStr !== lastDate) {
+      parts.push(`<div class="chat-date-sep">${dateStr}</div>`);
+      lastDate = dateStr;
+    }
+    const hora = dateObj ? dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    const dir = m.direcao === 'RECEBIDA' ? 'recebida' : 'enviada';
+    parts.push(`
+      <div class="chat-msg ${dir}">
         <div>${escHtml(m.texto || '')}</div>
-        <div class="msg-time">${dt}</div>
-      </div>`;
-  }).join('');
+        <span class="msg-time">${hora}</span>
+      </div>`);
+  }
+  chatMsgs.innerHTML = parts.join('');
   chatMsgs.scrollTop = chatMsgs.scrollHeight;
 }
 

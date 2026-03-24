@@ -481,9 +481,10 @@ tr {
 
 /* ── Chat history modal ───────────────── */
 .chat-modal-inner {
-  max-width: 640px;
-  width: 95%;
-  max-height: 85vh;
+  /* Override .modal base completely */
+  max-width: min(860px, 92vw);
+  width: 100%;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -492,60 +493,121 @@ tr {
 }
 
 .chat-header {
-  padding: 14px 20px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   flex-shrink: 0;
+  min-height: 60px;
+}
+
+.chat-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-header-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-header-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .chat-back {
-  background: none;
-  border: none;
-  color: var(--accent);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
   cursor: pointer;
-  font-size: 0.9rem;
-  padding: 4px 0;
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 8px;
   white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  /* touch target */
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-back:hover {
+  background: var(--border);
+  color: var(--text);
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 20px 24px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-height: 160px;
+  gap: 10px;
+  min-height: 200px;
 }
 
 .chat-msg {
-  max-width: 72%;
-  padding: 8px 14px;
-  border-radius: 12px;
-  font-size: 0.875rem;
-  line-height: 1.5;
+  max-width: 68%;
+  padding: 10px 16px;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  line-height: 1.55;
   word-break: break-word;
 }
 
 .chat-msg.recebida {
   align-self: flex-start;
   background: var(--bg-hover);
-  border-bottom-left-radius: 2px;
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 3px;
 }
 
 .chat-msg.enviada {
   align-self: flex-end;
-  background: rgba(124, 106, 247, 0.2);
-  border: 1px solid rgba(124, 106, 247, 0.3);
-  border-bottom-right-radius: 2px;
+  background: rgba(124, 106, 247, 0.18);
+  border: 1px solid rgba(124, 106, 247, 0.32);
+  border-bottom-right-radius: 3px;
 }
 
 .chat-msg .msg-time {
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   color: var(--text-muted);
-  margin-top: 3px;
+  margin-top: 5px;
+  display: block;
+  text-align: right;
+}
+
+.chat-msg.recebida .msg-time {
+  text-align: left;
+}
+
+.chat-date-sep {
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-date-sep::before,
+.chat-date-sep::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
 }
 
 /* ── Instâncias ───────────────────────── */
@@ -1174,18 +1236,44 @@ tr {
 
   .chat-modal-inner {
     width: 100%;
-    max-width: none;
-    max-height: 92vh;
-    border-radius: var(--radius) var(--radius) 0 0;
+    max-width: 100%;
+    max-height: 94svh; /* svh = safe viewport height (iOS safe area aware) */
+    border-radius: 16px 16px 0 0;
     align-self: flex-end;
   }
 
   .modal-overlay:has(.chat-modal-inner) {
     align-items: flex-end;
+    padding: 0;
+  }
+
+  .chat-header {
+    padding: 14px 16px;
+    /* drag handle visual */
+    position: relative;
+  }
+
+  .chat-header::before {
+    content: '';
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+  }
+
+  .chat-messages {
+    padding: 16px;
+    /* Safe area for iOS home bar */
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
   }
 
   .chat-msg {
     max-width: 88%;
+    font-size: 0.9rem;
   }
 
   .pagination {

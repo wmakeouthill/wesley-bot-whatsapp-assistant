@@ -847,7 +847,7 @@ Python | Avançado | Backend
             any(term in texto_norm for term in ("certificado", "certificados", "certificate", "certificates"))
             and any(
                 termo in texto_norm
-                for termo in ("quais", "listar", "lista", "tenho", "possuo", "mostrar", "mostra")
+                for termo in ("quais", "listar", "lista", "tenho", "possuo", "mostrar", "mostra", "tem", "has")
             )
         )
 
@@ -924,7 +924,10 @@ Python | Avançado | Backend
         pergunta_nome_wesley = (
             "nome do wesley" in texto_norm
             or "quem e o wesley" in texto_norm
-            or ("nome dele" in texto_norm and "wesley" in texto_norm)
+            or "qual nome dele" in texto_norm
+            or texto_norm == "nome dele"
+            or texto_norm.endswith("nome dele?")
+            or "nome dele" in texto_norm
         )
         if pergunta_nome_wesley:
             return f"O nome dele é {WESLEY_PUBLIC_NAME}."

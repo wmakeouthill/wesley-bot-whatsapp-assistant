@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Painel — Bot Admin</title>
-    <link rel="stylesheet" href="/static/panel/panel.css?v=4">
+    <link rel="stylesheet" href="/static/panel/panel.css?v=5">
 </head>
 
 <body>
@@ -189,7 +189,10 @@
         <div class="modal chat-modal-inner">
             <div class="chat-header">
                 <button class="chat-back" onclick="fecharHistorico()">← Fechar</button>
-                <strong id="chat-nome"></strong>
+                <div class="chat-header-info">
+                    <span class="chat-header-name" id="chat-nome"></span>
+                    <span class="chat-header-sub" id="chat-sub"></span>
+                </div>
             </div>
             <div class="chat-messages" id="chat-messages"></div>
         </div>
@@ -210,7 +213,7 @@
     <!-- ── Toast ── -->
     <div class="toast" id="toast"></div>
 
-    <script src="/static/panel/panel.js?v=4"></script>
+    <script src="/static/panel/panel.js?v=5"></script>
     <script>
         // Popula o seletor de instâncias no load
         async function initInstSelect() {
