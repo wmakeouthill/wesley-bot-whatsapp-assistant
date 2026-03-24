@@ -2,6 +2,7 @@ import logging
 import uuid
 import base64
 import io
+import re
 from typing import Optional
 from datetime import datetime
 
@@ -26,11 +27,16 @@ logger = logging.getLogger(__name__)
 
 PROMPT_PORTFOLIO = """
 Você é o Assistente Virtual Oficial do Wesley no WhatsApp.
-Seja amigável, direto, e natural em suas respostas. O usuário se chama {nome_cliente}.
+Seja amigável, direto, e natural em suas respostas.
+Nome de exibição no WhatsApp: {nome_cliente}. Esse nome pode estar desatualizado ou incompleto.
 
 Abaixo está o CONTEXTO contendo as informações sobre os certificados, habilidades e currículo do Wesley.
 Baseado ESTREITAMENTE nesse contexto, responda a pergunta do usuário.
 Se a informação não estiver no contexto, diga que você vai anotar a dúvida para o próprio Wesley responder depois, e NUNCA invente informações.
+
+Regras críticas:
+- Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
+- Se já houver saudação anterior no histórico, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 CONTEXTO DEDUZIDO DO PORTFÓLIO:
 {contexto}
@@ -40,7 +46,7 @@ CONTEXTO DEDUZIDO DO PORTFÓLIO:
 
 PROMPT_PORTFOLIO_AUDIO = """
 Você é o Assistente Virtual Oficial do Wesley no WhatsApp.
-O usuário se chama {nome_cliente}.
+Nome de exibição no WhatsApp: {nome_cliente}. Esse nome pode estar desatualizado ou incompleto.
 Sua resposta será convertida em voz (TTS), portanto:
 1. Seja extremamente natural, coloquial e amigável.
 2. EVITE QUALQUER formatação markdown (sem asteriscos **, sem listas com -, sem hashtags #).
@@ -49,6 +55,10 @@ Sua resposta será convertida em voz (TTS), portanto:
 
 Abaixo está o CONTEXTO contendo as informações sobre o Wesley.
 Baseado ESTREITAMENTE nesse contexto, responda a pergunta do usuário. Se não souber dizer, fale que não sabe. NUNCA invente informações.
+
+Regras críticas:
+- Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
+- Se já houver saudação anterior no histórico, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 CONTEXTO DEDUZIDO DO PORTFÓLIO:
 {contexto}
@@ -66,6 +76,9 @@ Regras de personalidade:
 - Seja direta e objetiva, como num chat real.
 - Não use markdown (sem **, sem #, sem listas com -).
 - Se não souber algo, diga que vai anotar para o Wesley responder pessoalmente em breve. NUNCA invente informações.
+- Nome de exibição no WhatsApp: {nome_cliente}. Esse nome pode estar desatualizado ou incompleto.
+- Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
+- Se o histórico já mostrar uma saudação anterior da assistente, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 Abaixo está o CONTEXTO contendo as informações profissionais, habilidades e portfólio do Wesley.
 Sempre que perguntado sobre trabalho ou habilidades dele, responda baseando-se EXCLUSIVAMENTE nesse contexto:
@@ -88,6 +101,9 @@ Regras:
 2. EVITE QUALQUER formatação markdown.
 3. Escreva para ser falado (ex: "Node J S", "C Sharp", "cem por cento").
 4. Não invente informações. Se não souber, diga que o Wesley responde depois.
+5. Nome de exibição no WhatsApp: {nome_cliente}. Esse nome pode estar desatualizado ou incompleto.
+6. Nunca confirme nome completo, telefone, empresa ou qualquer dado de contato como fato, a menos que isso tenha sido explicitamente confirmado pelo próprio usuário no histórico.
+7. Se o histórico já mostrar uma saudação anterior da assistente, não cumprimente de novo e não reabra a conversa com "olá", "oi", "tudo bem" ou equivalente.
 
 Abaixo está o CONTEXTO profissional do Wesley. Use essas informações se perguntarem de trabalho ou habilidades dele. NUNCA invente:
 {contexto}
@@ -164,14 +180,15 @@ class AtendimentoService:
             telefone = remote_jid.split("@")[0]
             telefone_numero = telefone
 
-        nome_cliente = body.data.pushName or "Cliente"
+        nome_cliente = self._normalizar_nome_exibicao(body.data.pushName)
         id_mensagem = body.data.key.id
+        contato_memoria_id = self._normalizar_contato_id(remote_jid)
 
         texto_recebido = self._extrair_texto(body)
         if not texto_recebido:
             return
 
-        logger.info(f"[{instancia}][{telefone} / {nome_cliente}]: {texto_recebido}")
+        logger.info(f"[{instancia}][{telefone} / {contato_memoria_id} / {nome_cliente}]: {texto_recebido}")
 
         # --- Verifica blocklist/allowlist persistidos em banco, por instância ---
         if await self._is_blocked(instancia, telefone_numero):
@@ -195,20 +212,20 @@ class AtendimentoService:
             return
 
         # --- Salva mensagem recebida ---
-        await self._salvar_mensagem(telefone, nome_cliente, texto_recebido, "RECEBIDA", id_mensagem)
+        await self._salvar_mensagem(contato_memoria_id, nome_cliente, texto_recebido, "RECEBIDA", id_mensagem)
 
         # --- Roteamento por instância: pessoal vs portfólio ---
         if instancia == settings.evolution_instance_two_name:
-            await self._responder_instancia_pessoal(ev_client, telefone, nome_cliente, texto_recebido)
+            await self._responder_instancia_pessoal(ev_client, telefone, contato_memoria_id, nome_cliente, texto_recebido)
         else:
-            await self._responder_instancia_portfolio(ev_client, telefone, nome_cliente, texto_recebido)
+            await self._responder_instancia_portfolio(ev_client, telefone, contato_memoria_id, nome_cliente, texto_recebido)
 
     # -----------------------------------------------------------------------
     # Fluxo da instância PORTFÓLIO (instância 1 — comportamento original)
     # -----------------------------------------------------------------------
 
     async def _responder_instancia_portfolio(
-        self, ev_client: EvolutionClient, telefone: str, nome: str, texto: str
+        self, ev_client: EvolutionClient, telefone: str, contato_memoria_id: str, nome: str, texto: str
     ):
         telefone_numero = telefone.split("@")[0] if "@" in telefone else telefone
         texto_lower = texto.lower()
@@ -241,9 +258,13 @@ class AtendimentoService:
 
         contexto_rag = await self.rag.retrieve_smart(topico_query)
         projeto_md = self.rag.load_project_if_mentioned(topico_query)
-        contexto = (projeto_md + "\n---\n" + contexto_rag) if projeto_md else contexto_rag
+        contexto = self._combinar_contextos(
+            self.rag.get_minimum_context(),
+            projeto_md,
+            contexto_rag,
+        )
 
-        historico_str = await self._obter_historico(telefone, limite=5)
+        historico_str = await self._obter_historico(contato_memoria_id, limite=8)
         contexto = self._aplicar_token_budget(contexto, historico_str, texto)
 
         if _quer_planilha:
@@ -254,9 +275,10 @@ class AtendimentoService:
             return
 
         resposta_ia = await self._gerar_resposta_portfolio(nome, texto, contexto, historico_str)
+        resposta_ia = self._remover_saudacao_repetida(resposta_ia, historico_str)
         try:
             await ev_client.send_text_message(telefone, resposta_ia)
-            await self._salvar_mensagem(telefone, nome, resposta_ia, "ENVIADA")
+            await self._salvar_mensagem(contato_memoria_id, nome, resposta_ia, "ENVIADA")
         except Exception as e:
             logger.error(f"Erro ao enviar resposta para {telefone}: {e}")
 
@@ -265,24 +287,29 @@ class AtendimentoService:
     # -----------------------------------------------------------------------
 
     async def _responder_instancia_pessoal(
-        self, ev_client: EvolutionClient, telefone: str, nome: str, texto: str
+        self, ev_client: EvolutionClient, telefone: str, contato_memoria_id: str, nome: str, texto: str
     ):
         """Responde como o assistente pessoal do Wesley, usando o histórico da conversa."""
         texto_lower = texto.lower()
         _FORMATO_AUDIO = {"áudio", "audio", "voz", "voice"}
         _quer_audio = any(k in texto_lower for k in _FORMATO_AUDIO)
 
-        historico_str = await self._obter_historico(telefone, limite=8)  # mais histórico para pegar o estilo
+        historico_str = await self._obter_historico(contato_memoria_id, limite=12)  # mais histórico para pegar o estilo
         
         # Recupera o contexto do portfólio para a instância pessoal também
         topico_query = " ".join(texto_lower.split()).strip() or texto
         contexto_rag = await self.rag.retrieve_smart(topico_query)
         projeto_md = self.rag.load_project_if_mentioned(topico_query)
-        contexto = (projeto_md + "\n---\n" + contexto_rag) if projeto_md else contexto_rag
+        contexto = self._combinar_contextos(
+            self.rag.get_minimum_context(),
+            projeto_md,
+            contexto_rag,
+        )
         contexto = self._aplicar_token_budget(contexto, historico_str, texto)
 
         if _quer_audio:
             resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, contexto, para_audio=True)
+            resposta = self._remover_saudacao_repetida(resposta, historico_str)
             try:
                 import asyncio
                 def _gerar_tts():
@@ -294,17 +321,18 @@ class AtendimentoService:
                 
                 b64 = await asyncio.wait_for(asyncio.to_thread(_gerar_tts), timeout=30.0)
                 await ev_client.send_base64_audio(telefone, b64)
-                await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
+                await self._salvar_mensagem(contato_memoria_id, nome, resposta, "ENVIADA")
             except Exception as e:
                 logger.error(f"Erro enviando áudio pessoal para {telefone}: {e}")
                 # Fallback texto
                 await ev_client.send_text_message(telefone, resposta)
-                await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
+                await self._salvar_mensagem(contato_memoria_id, nome, resposta, "ENVIADA")
         else:
             resposta = await self._gerar_resposta_pessoal(nome, texto, historico_str, contexto, para_audio=False)
+            resposta = self._remover_saudacao_repetida(resposta, historico_str)
             try:
                 await ev_client.send_text_message(telefone, resposta)
-                await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
+                await self._salvar_mensagem(contato_memoria_id, nome, resposta, "ENVIADA")
             except Exception as e:
                 logger.error(f"Erro ao enviar resposta pessoal para {telefone}: {e}")
 
@@ -613,6 +641,7 @@ class AtendimentoService:
         historico: str = "",
     ):
         resposta_texto = await self._gerar_resposta_portfolio_audio(nome, texto, contexto, historico)
+        resposta_texto = self._remover_saudacao_repetida(resposta_texto, historico)
         logger.info(f"Gerando áudio TTS para {telefone}: {resposta_texto[:60]}...")
         try:
             import asyncio
@@ -625,11 +654,11 @@ class AtendimentoService:
 
             b64 = await asyncio.wait_for(asyncio.to_thread(_gerar_tts_portfolio), timeout=30.0)
             await ev_client.send_base64_audio(telefone, b64)
-            await self._salvar_mensagem(telefone, nome, resposta_texto, "ENVIADA")
+            await self._salvar_mensagem(self._normalizar_contato_id(telefone), nome, resposta_texto, "ENVIADA")
         except Exception as e:
             logger.error(f"Erro enviando áudio para {telefone}: {e}")
             await ev_client.send_text_message(telefone, resposta_texto)
-            await self._salvar_mensagem(telefone, nome, resposta_texto, "ENVIADA")
+            await self._salvar_mensagem(self._normalizar_contato_id(telefone), nome, resposta_texto, "ENVIADA")
 
     async def _responder_como_planilha(
         self,
@@ -692,12 +721,13 @@ Python | Avançado | Backend
             b64 = base64.b64encode(excel_io.read()).decode("utf-8")
             caption = f"Planilha gerada para {nome} com base no portfólio do Wesley!"
             await ev_client.send_base64_document(telefone, b64, "Wesley_Portfolio.xlsx", caption)
-            await self._salvar_mensagem(telefone, nome, "[Planilha Excel gerada e enviada]", "ENVIADA")
+            await self._salvar_mensagem(self._normalizar_contato_id(telefone), nome, "[Planilha Excel gerada e enviada]", "ENVIADA")
         except Exception as e:
             logger.error(f"Erro enviando planilha para {telefone}: {e}")
             resposta = await self._gerar_resposta_portfolio(nome, texto, contexto, historico)
+            resposta = self._remover_saudacao_repetida(resposta, historico)
             await ev_client.send_text_message(telefone, resposta)
-            await self._salvar_mensagem(telefone, nome, resposta, "ENVIADA")
+            await self._salvar_mensagem(self._normalizar_contato_id(telefone), nome, resposta, "ENVIADA")
 
     # -----------------------------------------------------------------------
     # Utilidades
@@ -726,6 +756,70 @@ Python | Avançado | Backend
         logger.warning(f"Token Budget: cortando RAG de {len(contexto)} para {chars_disponiveis} chars.")
         return contexto[:chars_disponiveis]
 
+    def _normalizar_contato_id(self, whatsapp_id: Optional[str]) -> str:
+        if not whatsapp_id:
+            return ""
+        base = whatsapp_id.split("@")[0].strip()
+        digits = "".join(ch for ch in base if ch.isdigit())
+        return digits or base
+
+    def _variantes_contato_id(self, whatsapp_id: Optional[str]) -> list[str]:
+        variantes: list[str] = []
+        bruto = (whatsapp_id or "").strip()
+        normalizado = self._normalizar_contato_id(bruto)
+        for valor in (bruto, normalizado):
+            if valor and valor not in variantes:
+                variantes.append(valor)
+        if normalizado:
+            for sufixo in ("@s.whatsapp.net", "@lid"):
+                variante = f"{normalizado}{sufixo}"
+                if variante not in variantes:
+                    variantes.append(variante)
+        return variantes
+
+    def _normalizar_nome_exibicao(self, nome: Optional[str]) -> str:
+        clean = " ".join((nome or "").split()).strip()
+        if not clean:
+            return "contato"
+        primeiro_nome = clean.split()[0]
+        return primeiro_nome[:40]
+
+    def _combinar_contextos(self, *partes: Optional[str]) -> str:
+        partes_unicas: list[str] = []
+        for parte in partes:
+            trecho = (parte or "").strip()
+            if trecho and trecho not in partes_unicas:
+                partes_unicas.append(trecho)
+        return "\n---\n".join(partes_unicas)
+
+    def _historico_tem_saudacao_anterior(self, historico: str) -> bool:
+        historico_lower = historico.lower()
+        return any(
+            marcador in historico_lower
+            for marcador in (
+                "assistente: olá",
+                "assistente: ola",
+                "assistente: oi",
+                "assistente: opa",
+                "assistente: tudo bem",
+            )
+        )
+
+    def _remover_saudacao_repetida(self, resposta: str, historico: str) -> str:
+        if not resposta or not self._historico_tem_saudacao_anterior(historico):
+            return resposta
+        texto = resposta.strip()
+        padroes = [
+            r"^(oi|olá|ola|opa|e aí|eaí|ei)\b[^.!?\n]*[.!?]\s*",
+            r"^tudo bem\??\s*",
+            r"^(oi|olá|ola|opa)\s+[^\n,!?]{1,40},?\s*",
+        ]
+        for padrao in padroes:
+            novo = re.sub(padrao, "", texto, flags=re.IGNORECASE)
+            if novo != texto:
+                texto = novo.strip()
+        return texto or resposta
+
     async def _salvar_mensagem(
         self,
         whatsapp_id: str,
@@ -737,14 +831,18 @@ Python | Avançado | Backend
         if not texto:
             return
         async with async_session() as session:
-            stmt = select(Cliente).where(Cliente.whatsapp_id == whatsapp_id)
+            contato_id = self._normalizar_contato_id(whatsapp_id)
+            variantes = self._variantes_contato_id(whatsapp_id)
+            stmt = select(Cliente).where(Cliente.whatsapp_id.in_(variantes))
             result = await session.execute(stmt)
             cliente = result.scalar_one_or_none()
 
             if not cliente:
-                cliente = Cliente(id=str(uuid.uuid4()), whatsapp_id=whatsapp_id, nome=nome)
+                cliente = Cliente(id=str(uuid.uuid4()), whatsapp_id=contato_id or whatsapp_id, nome=nome)
                 session.add(cliente)
                 await session.flush()
+            elif not cliente.nome and nome:
+                cliente.nome = nome
 
             if msg_id:
                 stmt_msg = select(Mensagem).where(Mensagem.mensagem_id_whatsapp == msg_id)
@@ -765,7 +863,7 @@ Python | Avançado | Backend
 
     async def _obter_historico(self, whatsapp_id: str, limite: int = 5) -> str:
         async with async_session() as session:
-            stmt = select(Cliente).where(Cliente.whatsapp_id == whatsapp_id)
+            stmt = select(Cliente).where(Cliente.whatsapp_id.in_(self._variantes_contato_id(whatsapp_id)))
             result = await session.execute(stmt)
             cliente = result.scalar_one_or_none()
             if not cliente:

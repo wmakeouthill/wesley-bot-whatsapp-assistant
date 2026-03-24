@@ -286,14 +286,16 @@ async def panel_conversation_history(
 ):
     """Retorna histórico de mensagens de uma conversa."""
     chat_jid = chat_jid_encoded.replace("__at__", "@")
+    numero_base = chat_jid.split("@")[0].strip()
+    variantes = [chat_jid, numero_base]
+    if numero_base:
+        for sufixo in ("@s.whatsapp.net", "@lid"):
+            variante = f"{numero_base}{sufixo}"
+            if variante not in variantes:
+                variantes.append(variante)
 
     async with async_session() as session:
-        stmt = select(Cliente).where(
-            or_(
-                Cliente.whatsapp_id == chat_jid,
-                Cliente.whatsapp_id == chat_jid.split("@")[0],
-            )
-        )
+        stmt = select(Cliente).where(Cliente.whatsapp_id.in_(variantes))
         result = await session.execute(stmt)
         cliente = result.scalar_one_or_none()
 

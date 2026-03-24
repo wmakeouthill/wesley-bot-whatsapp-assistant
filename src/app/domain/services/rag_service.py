@@ -25,6 +25,7 @@ MAX_L2_DISTANCE = 1.2
 # Arquivos considerados contexto base — carregados como fallback garantido
 # quando nenhum chunk relevante é encontrado via FAISS.
 FALLBACK_FILES = {"CURRICULO.md", "STACKS.md"}
+MINIMUM_CONTEXT_FILE = "CURRICULO.md"
 
 
 class ProjectDetector:
@@ -148,6 +149,7 @@ class PortfolioRAG:
 
         # Contexto de fallback (curriculo + stacks) — carregado na inicialização
         self._fallback_context: str = ""
+        self._minimum_context: str = ""
 
         # Detector de projetos on-demand
         self.project_detector = ProjectDetector(self.data_dir / "projects")
@@ -201,6 +203,8 @@ class PortfolioRAG:
             if matches:
                 try:
                     content = matches[0].read_text(encoding="utf-8")
+                    if fname.upper() == MINIMUM_CONTEXT_FILE.upper():
+                        self._minimum_context = f"--- {fname} ---\n{content}"
                     parts.append(f"--- {fname} ---\n{content}")
                     logger.info(f"Fallback carregado: {matches[0]}")
                 except Exception as e:
@@ -210,6 +214,10 @@ class PortfolioRAG:
             logger.info("Contexto de fallback (curriculo+stacks) pronto.")
         else:
             logger.warning("Nenhum arquivo de fallback encontrado (CURRICULO.md / STACKS.md).")
+
+    def get_minimum_context(self) -> str:
+        """Retorna o contexto mínimo obrigatório (currículo), com fallback para o contexto base completo."""
+        return self._minimum_context or self._fallback_context
 
     # -----------------------------------------------------------------------
     # Build

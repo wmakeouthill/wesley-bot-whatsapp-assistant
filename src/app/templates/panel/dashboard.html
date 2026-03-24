@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Painel — Bot Admin</title>
-    <link rel="stylesheet" href="/static/panel/panel.css?v=3">
+    <link rel="stylesheet" href="/static/panel/panel.css?v=4">
 </head>
 
 <body>
@@ -104,15 +104,6 @@
                     </div>
                 </div>
 
-                <!-- Chat histórico (escondido inicialmente) -->
-                <div id="chat-wrap" class="chat-wrap" style="display:none">
-                    <div class="chat-header">
-                        <button class="chat-back" onclick="fecharHistorico()">← Voltar</button>
-                        <strong id="chat-nome"></strong>
-                    </div>
-                    <div class="chat-messages" id="chat-messages"></div>
-                </div>
-
                 <!-- Tabela de conversas -->
                 <div class="table-wrap conversas-table-wrap">
                     <div class="table-header">
@@ -193,6 +184,17 @@
         </main>
     </div>
 
+    <!-- ── Chat Histórico Modal ── -->
+    <div class="modal-overlay" id="chat-modal" style="display:none" onclick="if(event.target===this) fecharHistorico()">
+        <div class="modal chat-modal-inner">
+            <div class="chat-header">
+                <button class="chat-back" onclick="fecharHistorico()">← Fechar</button>
+                <strong id="chat-nome"></strong>
+            </div>
+            <div class="chat-messages" id="chat-messages"></div>
+        </div>
+    </div>
+
     <!-- ── QR Modal ── -->
     <div class="modal-overlay" id="qr-modal" style="display:none" onclick="if(event.target===this) fecharModalQR()">
         <div class="modal">
@@ -208,7 +210,7 @@
     <!-- ── Toast ── -->
     <div class="toast" id="toast"></div>
 
-    <script src="/static/panel/panel.js?v=3"></script>
+    <script src="/static/panel/panel.js?v=4"></script>
     <script>
         // Popula o seletor de instâncias no load
         async function initInstSelect() {

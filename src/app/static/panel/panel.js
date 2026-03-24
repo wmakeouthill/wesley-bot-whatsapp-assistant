@@ -154,9 +154,29 @@ async function loadConversas(page = 1) {
   // Paginação
   paginEl.innerHTML = '';
   if (data.pages > 1) {
-    for (let i = 1; i <= data.pages; i++) {
-      paginEl.innerHTML += `<button class="${i === page ? 'active' : ''}" onclick="loadConversas(${i})">${i}</button>`;
+    const totalPages = data.pages;
+    const cur = page;
+    const range = [];
+
+    // Sempre inclui primeira, última e vizinhas da página atual
+    for (let i = 1; i <= totalPages; i++) {
+      if (i === 1 || i === totalPages || (i >= cur - 2 && i <= cur + 2)) {
+        range.push(i);
+      }
     }
+
+    let html = '';
+    html += `<button ${cur === 1 ? 'disabled' : ''} onclick="loadConversas(${cur - 1})" title="Anterior">‹</button>`;
+    let prev = null;
+    for (const i of range) {
+      if (prev !== null && i - prev > 1) {
+        html += `<span class="pagination-ellipsis">…</span>`;
+      }
+      html += `<button class="${i === cur ? 'active' : ''}" onclick="loadConversas(${i})">${i}</button>`;
+      prev = i;
+    }
+    html += `<button ${cur === totalPages ? 'disabled' : ''} onclick="loadConversas(${cur + 1})" title="Próxima">›</button>`;
+    paginEl.innerHTML = html;
   }
 }
 
@@ -223,14 +243,14 @@ async function excluirConversa(clienteId, nome) {
 /* ------------------- Histórico ------------------- */
 async function verHistorico(jidEnc, nome) {
   conversaJid = jidEnc;
-  const listEl = document.getElementById('conversas-list');
-  const chatEl = document.getElementById('chat-wrap');
+  const chatModal = document.getElementById('chat-modal');
   const chatTitle = document.getElementById('chat-nome');
   const chatMsgs = document.getElementById('chat-messages');
 
   chatTitle.textContent = nome;
   chatMsgs.innerHTML = '<div class="loading">Carregando histórico...</div>';
-  chatEl.style.display = 'flex';
+  chatModal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
 
   const data = await api('GET', `/api/panel/conversations/${jidEnc}/history?limite=80`);
   if (!data || !data.mensagens.length) {
@@ -250,7 +270,8 @@ async function verHistorico(jidEnc, nome) {
 }
 
 function fecharHistorico() {
-  document.getElementById('chat-wrap').style.display = 'none';
+  document.getElementById('chat-modal').style.display = 'none';
+  document.body.style.overflow = '';
   conversaJid = null;
 }
 
